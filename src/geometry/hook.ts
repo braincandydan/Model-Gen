@@ -185,6 +185,8 @@ export function buildHookBody(p: HookParams, screw: ScrewSpec): HookBuildResult 
   // covers the last `t` of that length.
   const shelfSideZStart = -t;
   const shelfSideZEnd = curl > 0 ? tipZ - t : tipZ;
+  const gapInnerZ = -(t + D); // world_z where the back wall's inner (gap-facing) face sits
+  const floorBottomY = clampTop - t; // underside of the floor's cantilevered overhang
 
   const wedges: THREE.BufferGeometry[] = [
     // front-left / front-right, running the full arm height
@@ -202,15 +204,32 @@ export function buildHookBody(p: HookParams, screw: ScrewSpec): HookBuildResult 
     // top-left / top-right of the clamp block, running the full depth of the band
     buildFilletWedge(hw, -1, clampTop, -1, bevel, filletSegments, mapDepth, backZ, frontZ),
     buildFilletWedge(-hw, 1, clampTop, -1, bevel, filletSegments, mapDepth, backZ, frontZ),
-    // shelf-left / shelf-right, running the lip's exposed length
+    // shelf-left / shelf-right, running the lip's exposed length (its top-side edge)
     buildFilletWedge(hw, -1, t, -1, bevel, filletSegments, mapDepth, shelfSideZStart, shelfSideZEnd),
     buildFilletWedge(-hw, 1, t, -1, bevel, filletSegments, mapDepth, shelfSideZStart, shelfSideZEnd),
+    // back-wall-inner-left / -right: where the back wall's gap-facing inner face meets
+    // its own side face (separate from back-left/right, which is its far outer corner)
+    buildFilletWedge(hw, -1, gapInnerZ, -1, bevel, filletSegments, mapVertical, clampBottom, floorBottomY),
+    buildFilletWedge(-hw, 1, gapInnerZ, -1, bevel, filletSegments, mapVertical, clampBottom, floorBottomY),
+    // back-wall-bottom-left / -right: the underside of the back wall, which isn't backed
+    // by anything below it
+    buildFilletWedge(hw, -1, clampBottom, 1, bevel, filletSegments, mapDepth, backZ, gapInnerZ),
+    buildFilletWedge(-hw, 1, clampBottom, 1, bevel, filletSegments, mapDepth, backZ, gapInnerZ),
+    // Note: the arm's back edge (z=-t), the shelf's bottom edge (y=0), and the floor's
+    // underside (y=clampTop-t) are NOT beveled here even though they're exposed — each
+    // sits on a wall that's only `t` thick, and cutting a `bevel`-sized wedge from both
+    // sides of a wall thinner than 2*bevel makes the two cuts overlap, which breaks the
+    // CSG subtraction instead of producing a clean fillet (confirmed by testing it).
   ];
   if (curl > 0) {
     // end-stop-left / end-stop-right, covering the short length the shelf bevel above leaves out
     wedges.push(
       buildFilletWedge(hw, -1, t + curl, -1, bevel, filletSegments, mapDepth, tipZ - t, tipZ),
       buildFilletWedge(-hw, 1, t + curl, -1, bevel, filletSegments, mapDepth, tipZ - t, tipZ),
+      // end-stop-back-left / -right: its own back vertical edge, between the shelf-top
+      // bevel (below) and the end-stop-top bevel (above)
+      buildFilletWedge(hw, -1, tipZ - t, 1, bevel, filletSegments, mapVertical, t, t + curl),
+      buildFilletWedge(-hw, 1, tipZ - t, 1, bevel, filletSegments, mapVertical, t, t + curl),
     );
   }
   for (const wedge of wedges) {
