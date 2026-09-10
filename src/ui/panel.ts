@@ -30,7 +30,9 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
     'hookLipDepth',
     'hookCurlHeight',
     'clampBandHeight',
+    'clampOffset',
     'engagementDepth',
+    'screwEngagementDepth',
     'partWidth',
     'wallThickness',
   ];
@@ -169,9 +171,14 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
 
   return {
     updateSpec(screw: ScrewSpec) {
+      const engagementNote =
+        screw.backWallThickness <= screw.backWallThicknessMin + 0.01
+          ? ` <span title="Raised to the minimum needed so the threads don't strip">(raised to safe minimum)</span>`
+          : '';
       specBox.innerHTML = `
         <div>Nominal diameter: <strong>${screw.nominalDiameter.toFixed(1)} mm</strong></div>
         <div>Thread pitch: <strong>${screw.pitch.toFixed(2)} mm</strong></div>
+        <div>Thread engagement: <strong>${screw.backWallThickness.toFixed(1)} mm</strong>${engagementNote}</div>
         <div>Screw length: <strong>${screw.length.toFixed(1)} mm</strong></div>
         <div>Head diameter: <strong>${screw.headDiameter.toFixed(1)} mm</strong></div>
       `;

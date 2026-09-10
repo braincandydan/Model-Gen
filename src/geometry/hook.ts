@@ -42,7 +42,11 @@ export function buildHookBody(p: HookParams, screw: ScrewSpec): HookBuildResult 
   const Tb = screw.backWallThickness;
   const w = p.partWidth;
 
-  const clampBottom = t + H; // arm attaches here
+  // clampOffset adds extra plain arm above the hook's own reach before the clamp
+  // starts; 0 (the default/minimum) puts the clamp as close to the hook as possible,
+  // which is the strongest/most leverage-favorable position — moving it up trades some
+  // of that away, so it's capped (see PARAM_LIMITS) rather than left open-ended.
+  const clampBottom = t + H + p.clampOffset;
   const clampTop = clampBottom + B;
 
   let brush = toBrush(makeBox(w, -L, t, 0, t)); // shelf
