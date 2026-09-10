@@ -29,97 +29,82 @@ function makeBox(width: number, zProfMin: number, zProfMax: number, yMin: number
   return geom;
 }
 
-/**
- * A small triangular-prism cutting tool for chamfering one vertical edge (running
- * along Y) at world (x0, z0), where the solid extends `xInward`/`zInward` (±1) from
- * that corner. Winding is verified correct (positive signed volume) for all 4
- * xInward/zInward sign combinations by construction (see comment on the swap below).
- */
-function makeVerticalEdgeWedge(
-  x0: number,
-  xInward: 1 | -1,
-  z0: number,
-  zInward: 1 | -1,
-  bevel: number,
-  yMin: number,
-  yMax: number,
-): THREE.BufferGeometry {
-  const A: [number, number] = [x0, z0];
-  let Bp: [number, number] = [x0 + xInward * bevel, z0];
-  let Cp: [number, number] = [x0, z0 + zInward * bevel];
-  if (xInward * zInward > 0) {
-    const tmp = Bp;
-    Bp = Cp;
-    Cp = tmp;
+/** Tetrahedron-sum signed volume of a triangle soup (closed, consistently-wound). */
+function signedVolume(positions: number[]): number {
+  let vol = 0;
+  for (let i = 0; i < positions.length; i += 9) {
+    const ax = positions[i], ay = positions[i + 1], az = positions[i + 2];
+    const bx = positions[i + 3], by = positions[i + 4], bz = positions[i + 5];
+    const cx = positions[i + 6], cy = positions[i + 7], cz = positions[i + 8];
+    vol += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
   }
-  const mk = (y: number, p: [number, number]) => new THREE.Vector3(p[0], y, p[1]);
-  const A0 = mk(yMin, A);
-  const B0 = mk(yMin, Bp);
-  const C0 = mk(yMin, Cp);
-  const A1 = mk(yMax, A);
-  const B1 = mk(yMax, Bp);
-  const C1 = mk(yMax, Cp);
-
-  const positions: number[] = [];
-  const pushTri = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) => {
-    positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
-  };
-  pushTri(A0, B0, B1);
-  pushTri(A0, B1, A1);
-  pushTri(B0, C0, C1);
-  pushTri(B0, C1, B1);
-  pushTri(C0, A0, A1);
-  pushTri(C0, A1, C1);
-  pushTri(A0, C0, B0);
-  pushTri(A1, B1, C1);
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.computeVertexNormals();
-  return geometry;
+  return vol;
 }
 
-/** Same idea as makeVerticalEdgeWedge, but for a horizontal edge running along X. */
-function makeHorizontalEdgeWedge(
-  y0: number,
-  yInward: 1 | -1,
-  z0: number,
-  zInward: 1 | -1,
-  bevel: number,
-  xMin: number,
-  xMax: number,
-): THREE.BufferGeometry {
-  const A: [number, number] = [y0, z0];
-  let Bp: [number, number] = [y0 + yInward * bevel, z0];
-  let Cp: [number, number] = [y0, z0 + zInward * bevel];
-  if (yInward * zInward > 0) {
-    const tmp = Bp;
-    Bp = Cp;
-    Cp = tmp;
+/**
+ * Reverses every triangle's winding if the solid's signed volume is negative, so the
+ * result always has outward-facing normals. This replaces hand-derived per-case winding
+ * fixes (which were repeatedly a source of bugs in this file) with a self-checking one.
+ */
+function fixWinding(positions: number[]): number[] {
+  if (signedVolume(positions) >= 0) return positions;
+  const fixed: number[] = [];
+  for (let i = 0; i < positions.length; i += 9) {
+    fixed.push(
+      positions[i], positions[i + 1], positions[i + 2],
+      positions[i + 6], positions[i + 7], positions[i + 8],
+      positions[i + 3], positions[i + 4], positions[i + 5],
+    );
   }
-  const mk = (x: number, p: [number, number]) => new THREE.Vector3(x, p[0], p[1]);
-  const A0 = mk(xMin, A);
-  const B0 = mk(xMin, Bp);
-  const C0 = mk(xMin, Cp);
-  const A1 = mk(xMax, A);
-  const B1 = mk(xMax, Bp);
-  const C1 = mk(xMax, Cp);
+  return fixed;
+}
+
+/**
+ * A cutting tool for a rounded (filleted) edge, approximated by `segments` flat facets
+ * rather than one 45-degree chamfer cut — a single flat facet reads as an obvious hard
+ * bevel and doesn't behave like a print-friendly rounded edge, so this traces a quarter
+ * circle of radius `bevel` from corner (cornerU, cornerV) instead, with the solid
+ * extending `uInward`/`vInward` (±1) from that corner in the two in-plane axes. `mapTo3D`
+ * places the (u, v, span) parametrization into world space, so this one function serves
+ * both the vertical edges (extruded along Y) and horizontal edges (extruded along X) —
+ * see the call sites below.
+ */
+function buildFilletWedge(
+  cornerU: number,
+  uInward: 1 | -1,
+  cornerV: number,
+  vInward: 1 | -1,
+  bevel: number,
+  segments: number,
+  mapTo3D: (u: number, v: number, span: number) => THREE.Vector3,
+  spanMin: number,
+  spanMax: number,
+): THREE.BufferGeometry {
+  const pts: [number, number][] = [[cornerU, cornerV]];
+  for (let i = 0; i <= segments; i++) {
+    const theta = (i / segments) * (Math.PI / 2);
+    const u = cornerU + uInward * bevel * (1 - Math.sin(theta));
+    const v = cornerV + vInward * bevel * (1 - Math.cos(theta));
+    pts.push([u, v]);
+  }
+  const n = pts.length;
+  const bottom = pts.map(([u, v]) => mapTo3D(u, v, spanMin));
+  const top = pts.map(([u, v]) => mapTo3D(u, v, spanMax));
 
   const positions: number[] = [];
   const pushTri = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) => {
     positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
   };
-  pushTri(A0, B1, B0);
-  pushTri(A0, A1, B1);
-  pushTri(B0, C1, C0);
-  pushTri(B0, B1, C1);
-  pushTri(C0, A1, A0);
-  pushTri(C0, C1, A1);
-  pushTri(A0, B0, C0);
-  pushTri(A1, C1, B1);
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    pushTri(bottom[i], bottom[j], top[j]);
+    pushTri(bottom[i], top[j], top[i]);
+  }
+  for (let i = 1; i < n - 1; i++) pushTri(bottom[0], bottom[i + 1], bottom[i]);
+  for (let i = 1; i < n - 1; i++) pushTri(top[0], top[i], top[i + 1]);
 
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(fixWinding(positions), 3));
   geometry.computeVertexNormals();
   return geometry;
 }
@@ -178,23 +163,29 @@ export function buildHookBody(p: HookParams, screw: ScrewSpec): HookBuildResult 
   // subtraction of a small, simple wedge against the now-correct solid, not baked into
   // the boxes before the unions above (see the top-of-file note on why).
   const bevel = Math.min(2, t * 0.9);
+  const filletSegments = 4; // faceted quarter-circle approximation, not a single flat chamfer
   const tipZ = L; // world_z of the shelf/end-stop tip
   const frontZ = 0; // world_z of the arm/floor's front face
   const backZ = -(t + D + Tb); // world_z of the back wall's outer face
 
+  // (x, z) in-plane, extruded along Y (vertical edges)
+  const mapVertical = (x: number, z: number, y: number) => new THREE.Vector3(x, y, z);
+  // (y, z) in-plane, extruded along X (horizontal edges)
+  const mapHorizontal = (y: number, z: number, x: number) => new THREE.Vector3(x, y, z);
+
   const wedges: THREE.BufferGeometry[] = [
     // front-left / front-right, running the full arm height
-    makeVerticalEdgeWedge(hw, -1, frontZ, -1, bevel, t, clampTop),
-    makeVerticalEdgeWedge(-hw, 1, frontZ, -1, bevel, t, clampTop),
+    buildFilletWedge(hw, -1, frontZ, -1, bevel, filletSegments, mapVertical, t, clampTop),
+    buildFilletWedge(-hw, 1, frontZ, -1, bevel, filletSegments, mapVertical, t, clampTop),
     // tip-left / tip-right, running the full shelf + end-stop height
-    makeVerticalEdgeWedge(hw, -1, tipZ, -1, bevel, 0, t + curl),
-    makeVerticalEdgeWedge(-hw, 1, tipZ, -1, bevel, 0, t + curl),
+    buildFilletWedge(hw, -1, tipZ, -1, bevel, filletSegments, mapVertical, 0, t + curl),
+    buildFilletWedge(-hw, 1, tipZ, -1, bevel, filletSegments, mapVertical, 0, t + curl),
     // back-left / back-right, running the full back-wall height
-    makeVerticalEdgeWedge(hw, -1, backZ, 1, bevel, clampBottom, clampTop),
-    makeVerticalEdgeWedge(-hw, 1, backZ, 1, bevel, clampBottom, clampTop),
+    buildFilletWedge(hw, -1, backZ, 1, bevel, filletSegments, mapVertical, clampBottom, clampTop),
+    buildFilletWedge(-hw, 1, backZ, 1, bevel, filletSegments, mapVertical, clampBottom, clampTop),
     // top-front / top-back, running the full width
-    makeHorizontalEdgeWedge(clampTop, -1, frontZ, -1, bevel, -hw, hw),
-    makeHorizontalEdgeWedge(clampTop, -1, backZ, 1, bevel, -hw, hw),
+    buildFilletWedge(clampTop, -1, frontZ, -1, bevel, filletSegments, mapHorizontal, -hw, hw),
+    buildFilletWedge(clampTop, -1, backZ, 1, bevel, filletSegments, mapHorizontal, -hw, hw),
   ];
   for (const wedge of wedges) {
     brush = subtract(brush, toBrush(wedge));
