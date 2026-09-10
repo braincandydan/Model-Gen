@@ -1,4 +1,12 @@
-import { DEFAULT_PARAMS, MATERIALS, PARAM_LIMITS, type HookParams, type Material, type ScrewSpec } from '../params';
+import {
+  DEFAULT_PARAMS,
+  MATERIALS,
+  PARAM_LIMITS,
+  STANDARD_DIAMETERS,
+  type HookParams,
+  type Material,
+  type ScrewSpec,
+} from '../params';
 import type { LayoutMode } from '../scene';
 
 export interface PanelCallbacks {
@@ -38,6 +46,8 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
 
   const inputs: Partial<Record<keyof HookParams, HTMLInputElement>> = {};
   let screwEngagementNote: HTMLDivElement | null = null;
+  let clampBandNote: HTMLDivElement | null = null;
+  let clampScrewGroupEl: HTMLDivElement | null = null;
 
   for (const group of groups) {
     const groupEl = document.createElement('div');
@@ -45,6 +55,7 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
     const titleEl = document.createElement('h2');
     titleEl.textContent = group.title;
     groupEl.appendChild(titleEl);
+    if (group.title.startsWith('Clamp & screw')) clampScrewGroupEl = groupEl;
 
     for (const key of group.keys) {
       const limit = PARAM_LIMITS[key];
@@ -85,6 +96,11 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
         screwEngagementNote.className = 'field-note';
         field.appendChild(screwEngagementNote);
       }
+      if (key === 'clampBandHeight') {
+        clampBandNote = document.createElement('div');
+        clampBandNote.className = 'field-note';
+        field.appendChild(clampBandNote);
+      }
 
       groupEl.appendChild(field);
       inputs[key] = input;
@@ -92,6 +108,28 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
 
     panelEl.appendChild(groupEl);
   }
+
+  // Screw diameter is a standard gauge, not a free-form slider — a dropdown avoids
+  // implying every value in between is meaningful.
+  const diaField = document.createElement('div');
+  diaField.className = 'field';
+  const diaLabel = document.createElement('label');
+  diaLabel.innerHTML = '<span>Screw diameter</span>';
+  const diaSelect = document.createElement('select');
+  for (const d of STANDARD_DIAMETERS) {
+    const opt = document.createElement('option');
+    opt.value = String(d);
+    opt.textContent = `${d} mm`;
+    diaSelect.appendChild(opt);
+  }
+  diaSelect.value = String(params.screwDiameter);
+  diaSelect.addEventListener('change', () => {
+    params.screwDiameter = Number(diaSelect.value);
+    cb.onChange({ ...params });
+  });
+  diaField.appendChild(diaLabel);
+  diaField.appendChild(diaSelect);
+  clampScrewGroupEl?.appendChild(diaField);
 
   resetBtn.addEventListener('click', () => {
     Object.assign(params, DEFAULT_PARAMS);
@@ -102,6 +140,7 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
       input.dispatchEvent(new Event('input', { bubbles: true }));
     }
     matSelect.value = params.material;
+    diaSelect.value = String(params.screwDiameter);
     cb.onChange({ ...params });
   });
 
@@ -241,6 +280,12 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
       if (screwEngagementNote) {
         screwEngagementNote.textContent = raised
           ? `Raised to ${screw.backWallThicknessMin.toFixed(1)} mm — the minimum for this screw size so the threads don't strip`
+          : '';
+      }
+      if (clampBandNote) {
+        const bandRaised = params.clampBandHeight < screw.clampBandHeightMin - 0.01;
+        clampBandNote.textContent = bandRaised
+          ? `Raised to ${screw.clampBandHeightMin.toFixed(1)} mm — the minimum band height for a ${screw.nominalDiameter.toFixed(0)}mm screw to stay enclosed`
           : '';
       }
     },

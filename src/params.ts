@@ -10,8 +10,9 @@ export interface HookParams {
   clampOffset: number; // extra gap pushing the clamp further above the arm's natural end; 0 = lowest position = max leverage
   engagementDepth: number; // front-to-back thickness of the piece being clamped
   screwEngagementDepth: number; // how deep the screw threads into the back wall (independent of print wall thickness; floored to a safe minimum for the current screw size)
+  screwDiameter: number; // nominal screw thread diameter (mm), user-chosen — independent of everything else
   // Overall / print
-  partWidth: number; // width of the whole part (left-right), also drives screw size
+  partWidth: number; // width of the whole part (left-right)
   wallThickness: number; // thickness of every printed wall/lip
   material: Material;
 }
@@ -38,12 +39,18 @@ export const DEFAULT_PARAMS: HookParams = {
   clampOffset: 0,
   engagementDepth: 18,
   screwEngagementDepth: 22,
+  screwDiameter: 12,
   partWidth: 24,
   wallThickness: 3.2,
   material: 'PLA',
 };
 
-export const PARAM_LIMITS: Record<keyof Omit<HookParams, 'material'>, { min: number; max: number; step: number; label: string; unit: string }> = {
+export const STANDARD_DIAMETERS = [6, 8, 10, 12, 16, 20, 25];
+
+export const PARAM_LIMITS: Record<
+  keyof Omit<HookParams, 'material' | 'screwDiameter'>,
+  { min: number; max: number; step: number; label: string; unit: string }
+> = {
   hookHeight: { min: 15, max: 150, step: 1, label: 'Hook arm length', unit: 'mm' },
   hookLipDepth: { min: 10, max: 80, step: 1, label: 'Hook lip depth', unit: 'mm' },
   hookCurlHeight: { min: 0, max: 40, step: 1, label: 'Hook end-stop height', unit: 'mm' },
@@ -77,9 +84,8 @@ export interface ScrewSpec {
   backWallThickness: number; // the flush back wall's thickness = actual thread engagement length
   backWallThicknessMin: number; // the enforced floor that backWallThickness was clamped to, if needed
   clearance: number; // radial clearance for the female hole, per side
+  clampBandHeightMin: number; // enforced floor on clampBandHeight so the hole can't break through the band's top/bottom edge
 }
-
-const STANDARD_DIAMETERS = [6, 8, 10, 12, 16, 20, 25];
 
 function nearestStandardDiameter(target: number): number {
   let best = STANDARD_DIAMETERS[0];
@@ -95,22 +101,22 @@ function nearestStandardDiameter(target: number): number {
 }
 
 /**
- * Screw sizing is derived, not user-set directly:
- * - overall hook size (width + arm/lip reach) drives the screw's diameter/gauge
- * - the engagement depth (how wide the piece being clamped is) drives the screw's length
+ * Screw diameter is user-set directly (screwDiameter, snapped to a standard gauge) —
+ * length is still derived from the depth sliders, since that's a real dependent
+ * dimension (shank has to span the gap plus however deep it's threaded in), not a
+ * free choice.
  *
- * The one place a floor is enforced rather than just following the user's slider is
- * thread engagement (backWallThickness): a hand-tightened screw pressure-fitting
- * against something relies entirely on its printed plastic threads not stripping.
- * Printed threads are far weaker than machined ones, so engagement shorter than about
- * 1.5x the screw's nominal diameter is a real risk of stripping under normal tightening
- * torque — that floor is enforced here regardless of what the wall-thickness or
- * engagement-depth sliders are set to.
+ * Two floors are enforced rather than just following the user's sliders, both because
+ * a hand-tightened screw pressure-fitting against something relies entirely on its
+ * printed plastic threads not stripping or blowing out:
+ * - thread engagement (backWallThickness): engagement shorter than about 1.5x the
+ *   screw's nominal diameter is a real risk of stripping under normal tightening torque.
+ * - clamp band height (clampBandHeightMin): the hole bored for the screw has to stay
+ *   inside the band with real material above and below it, or a wide-enough screw
+ *   diameter breaks through the band's top/bottom edge instead of being enclosed by it.
  */
 export function deriveScrewSpec(p: HookParams): ScrewSpec {
-  const hookScale = p.partWidth * 0.5 + p.hookHeight * 0.15 + p.hookLipDepth * 0.15;
-  const rawDiameter = 8 + hookScale * 0.22; // biased up: this is a hand-tightened structural screw, not a machine screw
-  const nominalDiameter = nearestStandardDiameter(rawDiameter);
+  const nominalDiameter = nearestStandardDiameter(p.screwDiameter);
 
   const pitch = clamp(nominalDiameter / 5, 2, 4.5);
   const threadDepth = pitch * 0.5;
@@ -126,6 +132,11 @@ export function deriveScrewSpec(p: HookParams): ScrewSpec {
   const headHeight = Math.max(nominalDiameter * 1.1, 10);
 
   const mat = MATERIALS[p.material];
+  const clearance = mat.threadClearance;
+
+  const holeRadius = nominalDiameter / 2 + clearance;
+  const edgeMargin = 4; // minimum solid material above/below the bored hole, per side
+  const clampBandHeightMin = holeRadius * 2 + edgeMargin * 2;
 
   return {
     nominalDiameter,
@@ -136,7 +147,8 @@ export function deriveScrewSpec(p: HookParams): ScrewSpec {
     headHeight,
     backWallThickness,
     backWallThicknessMin,
-    clearance: mat.threadClearance,
+    clearance,
+    clampBandHeightMin,
   };
 }
 

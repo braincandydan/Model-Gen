@@ -117,7 +117,7 @@ export interface HookBuildResult {
 export function buildHookBody(p: HookParams, screw: ScrewSpec): HookBuildResult {
   const t = p.wallThickness;
   const D = p.engagementDepth;
-  const B = p.clampBandHeight;
+  const B = Math.max(p.clampBandHeight, screw.clampBandHeightMin); // wide screws need a taller band to stay enclosed
   const H = p.hookHeight;
   const L = p.hookLipDepth;
   const curl = p.hookCurlHeight;
