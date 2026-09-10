@@ -100,7 +100,7 @@ export interface ThreadedRodOptions {
   length: number;
   angularSegments?: number;
   ringsPerTurn?: number;
-  tip?: boolean; // rounded lead-in tip at z=0
+  tip?: boolean; // flat-point tip at z=0 (full contact against whatever it presses on, no cone digging in)
   headDiameter?: number;
   headHeight?: number;
   headSegments?: number; // low count = faceted "knurled" grip
@@ -112,9 +112,14 @@ export function buildThreadedRod(o: ThreadedRodOptions): THREE.BufferGeometry {
   let brush: Brush = toBrush(shaftGeom);
 
   if (o.tip) {
-    const tipLength = o.minorRadius * 1.3;
-    const tipGeom = new THREE.ConeGeometry(o.minorRadius * 0.96, tipLength, 32);
-    tipGeom.rotateX(-Math.PI / 2);
+    // A short, smooth (unthreaded) flat-ended nub: gives full flat contact against
+    // whatever the screw presses on, rather than a cone that would just dig a point
+    // into it. Slightly narrower than the root so it's a clean flat circle, not a
+    // ring left over from the thread crest's own waviness at the shaft's end.
+    const tipRadius = o.minorRadius * 0.9;
+    const tipLength = Math.max(o.minorRadius * 0.6, 1.5);
+    const tipGeom = new THREE.CylinderGeometry(tipRadius, tipRadius, tipLength, 32);
+    tipGeom.rotateX(Math.PI / 2);
     tipGeom.translate(0, 0, -tipLength / 2 + OVERLAP);
     brush = union(brush, toBrush(tipGeom));
   }
