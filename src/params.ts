@@ -1,12 +1,13 @@
 export type Material = 'PLA' | 'PETG' | 'ABS' | 'TPU';
 
 export interface HookParams {
-  // Hook (the part above the clamp band that things hang on)
-  hookHeight: number; // vertical length of the arm above the clamp band
+  // Hook (the arm that hangs below the clamp band, and what things hang on)
+  hookHeight: number; // vertical length of the arm below the clamp band
   hookLipDepth: number; // how far the lip projects forward, away from the wall
-  // Clamp / wraparound (the part that grips the vertical wall piece)
+  hookCurlHeight: number; // depth of the upturned stop at the tip, so hung items can't slide off the end
+  // Clamp / wraparound (the part that grips the shelf lip / wall piece, at the top)
   clampBandHeight: number; // vertical height of the wraparound band
-  engagementDepth: number; // front-to-back thickness of the vertical piece being clamped
+  engagementDepth: number; // front-to-back thickness of the piece being clamped
   // Overall / print
   partWidth: number; // width of the whole part (left-right), also drives screw size
   wallThickness: number; // thickness of every printed wall/lip
@@ -29,6 +30,7 @@ export const MATERIALS: Record<Material, MaterialProfile> = {
 export const DEFAULT_PARAMS: HookParams = {
   hookHeight: 55,
   hookLipDepth: 28,
+  hookCurlHeight: 16,
   clampBandHeight: 32,
   engagementDepth: 18,
   partWidth: 24,
@@ -37,8 +39,9 @@ export const DEFAULT_PARAMS: HookParams = {
 };
 
 export const PARAM_LIMITS: Record<keyof Omit<HookParams, 'material'>, { min: number; max: number; step: number; label: string; unit: string }> = {
-  hookHeight: { min: 15, max: 150, step: 1, label: 'Hook arm height', unit: 'mm' },
+  hookHeight: { min: 15, max: 150, step: 1, label: 'Hook arm length', unit: 'mm' },
   hookLipDepth: { min: 10, max: 80, step: 1, label: 'Hook lip depth', unit: 'mm' },
+  hookCurlHeight: { min: 0, max: 40, step: 1, label: 'Hook end-stop height', unit: 'mm' },
   clampBandHeight: { min: 12, max: 100, step: 1, label: 'Clamp band height', unit: 'mm' },
   engagementDepth: { min: 4, max: 60, step: 0.5, label: 'Wall-piece thickness (gap)', unit: 'mm' },
   partWidth: { min: 12, max: 100, step: 1, label: 'Overall width', unit: 'mm' },
@@ -52,12 +55,11 @@ export interface ScrewSpec {
   length: number; // full threaded shank length
   headDiameter: number;
   headHeight: number;
-  bossDiameter: number;
-  bossLength: number; // extra boss protrusion behind the flat back wall
+  backWallThickness: number; // the flush back wall's own thickness (holds the full thread engagement, no separate protrusion)
   clearance: number; // radial clearance for the female hole, per side
 }
 
-const STANDARD_DIAMETERS = [5, 6, 8, 10, 12, 16, 20];
+const STANDARD_DIAMETERS = [6, 8, 10, 12, 16, 20, 25];
 
 function nearestStandardDiameter(target: number): number {
   let best = STANDARD_DIAMETERS[0];
@@ -79,21 +81,22 @@ function nearestStandardDiameter(target: number): number {
  */
 export function deriveScrewSpec(p: HookParams): ScrewSpec {
   const hookScale = p.partWidth * 0.5 + p.hookHeight * 0.15 + p.hookLipDepth * 0.15;
-  const rawDiameter = 5 + hookScale * 0.12;
+  const rawDiameter = 8 + hookScale * 0.22; // biased up: this is a hand-tightened structural screw, not a machine screw
   const nominalDiameter = nearestStandardDiameter(rawDiameter);
 
-  const pitch = clamp(nominalDiameter / 5, 1.8, 4);
+  const pitch = clamp(nominalDiameter / 5, 2, 4.5);
   const threadDepth = pitch * 0.5;
 
-  // Boss needs room for a short smooth lead-in (through the back pad) plus real thread engagement.
-  const bossLength = Math.max(p.wallThickness * 2 + nominalDiameter * 1.2, 14);
+  // The screw threads straight into a thick, flush back wall (no separate round boss
+  // sticking out the back — a horizontal cylindrical protrusion is an unnecessary
+  // overhang and doesn't sit flush against a wall/shelf anyway).
+  const backWallThickness = Math.max(p.wallThickness * 2 + nominalDiameter * 1.4, 16);
   const travelMargin = 6; // extra travel so the screw can be backed off and re-tightened
-  const length = p.engagementDepth + p.wallThickness + bossLength + travelMargin;
+  const length = p.engagementDepth + backWallThickness + travelMargin;
 
-  const headDiameter = nominalDiameter * 2.2;
-  const headHeight = Math.max(nominalDiameter * 0.9, 6);
-
-  const bossDiameter = Math.max(nominalDiameter + p.wallThickness * 2.4, p.wallThickness * 4);
+  // Hand-tightened, so the head is a real handle, not a machine-screw head.
+  const headDiameter = nominalDiameter * 3;
+  const headHeight = Math.max(nominalDiameter * 1.1, 10);
 
   const mat = MATERIALS[p.material];
 
@@ -104,8 +107,7 @@ export function deriveScrewSpec(p: HookParams): ScrewSpec {
     length,
     headDiameter,
     headHeight,
-    bossDiameter,
-    bossLength,
+    backWallThickness,
     clearance: mat.threadClearance,
   };
 }

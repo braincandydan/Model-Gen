@@ -12,6 +12,6 @@ export function buildScrewSolid(screw: ScrewSpec): THREE.BufferGeometry {
     tip: true,
     headDiameter: screw.headDiameter,
     headHeight: screw.headHeight,
-    headSegments: 16,
+    headSegments: 10,
   });
 }

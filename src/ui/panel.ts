@@ -28,6 +28,7 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
   const sliderKeys: (keyof typeof PARAM_LIMITS)[] = [
     'hookHeight',
     'hookLipDepth',
+    'hookCurlHeight',
     'clampBandHeight',
     'engagementDepth',
     'partWidth',

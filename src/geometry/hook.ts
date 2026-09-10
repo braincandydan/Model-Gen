@@ -4,32 +4,22 @@ import { buildThreadedCylinderGeometry } from './thread';
 import type { HookParams, ScrewSpec } from '../params';
 
 /**
- * Side profile of the hook, drawn in a (z, y) plane: z=0 is the front face that hung
- * items rest against and that touches the front of the clamped wall piece; z increases
- * going back through the wall-piece gap to the back wall/boss. y=0 is the bottom of the
- * clamp band. It is later extruded along X (the part's width).
+ * The body is built as a union of simple boxes rather than one extruded 2D profile.
+ * A single concave profile (this shape has several reflex corners — the shelf notch,
+ * the clamp slot) hit real winding/normal bugs in THREE.ExtrudeGeometry's side-wall
+ * generation that survived even after fixing the path's overall winding direction.
+ * Boxes have trivially correct normals, so this sidesteps that class of bug entirely.
+ *
+ * Coordinates: z_profile=0 is the front face (what hung items rest against, and what
+ * touches the front of the clamped piece); z_profile increases going back into the
+ * clamp's gap and back wall. World Z is the negative of that (kept for compatibility
+ * with the hole-cutting code below). y=0 is the hook tip (bottom); the clamp band with
+ * the screw sits at the top, per the shelf mounted "over a lip" orientation.
  */
-export function buildHookProfile(p: HookParams): THREE.Shape {
-  const t = p.wallThickness;
-  const D = p.engagementDepth;
-  const B = p.clampBandHeight;
-  const H = p.hookHeight;
-  const L = p.hookLipDepth;
-
-  const shape = new THREE.Shape();
-  shape.moveTo(0, 0);
-  shape.lineTo(D + 2 * t, 0);
-  shape.lineTo(D + 2 * t, B);
-  shape.lineTo(t + D, B);
-  shape.lineTo(t + D, t);
-  shape.lineTo(t, t);
-  shape.lineTo(t, B);
-  shape.lineTo(t, B + H);
-  shape.lineTo(-L, B + H);
-  shape.lineTo(-L, B + H - t);
-  shape.lineTo(0, B + H - t);
-  shape.closePath();
-  return shape;
+function makeBox(width: number, zProfMin: number, zProfMax: number, yMin: number, yMax: number): THREE.BufferGeometry {
+  const geom = new THREE.BoxGeometry(width, yMax - yMin, zProfMax - zProfMin);
+  geom.translate(0, (yMin + yMax) / 2, -(zProfMin + zProfMax) / 2);
+  return geom;
 }
 
 export interface HookBuildResult {
@@ -38,28 +28,28 @@ export interface HookBuildResult {
 }
 
 export function buildHookBody(p: HookParams, screw: ScrewSpec): HookBuildResult {
-  const shape = buildHookProfile(p);
-  const extrudeGeom = new THREE.ExtrudeGeometry(shape, {
-    depth: p.partWidth,
-    bevelEnabled: false,
-    curveSegments: 6,
-  });
-  // local: x=z_profile, y=y_profile, z=extrude depth (0..partWidth)
-  // rotateY(90deg): world_x = local_z, world_z = -local_x
-  extrudeGeom.rotateY(Math.PI / 2);
-  extrudeGeom.translate(-p.partWidth / 2, 0, 0);
-
-  let brush = toBrush(extrudeGeom);
-
   const t = p.wallThickness;
   const D = p.engagementDepth;
-  const bossCenterY = p.clampBandHeight / 2;
-  const backOuterZProfile = t + D + t + screw.bossLength;
+  const B = p.clampBandHeight;
+  const H = p.hookHeight;
+  const L = p.hookLipDepth;
+  const curl = p.hookCurlHeight;
+  const Tb = screw.backWallThickness;
+  const w = p.partWidth;
 
-  const bossGeom = new THREE.CylinderGeometry(screw.bossDiameter / 2, screw.bossDiameter / 2, screw.bossLength, 32);
-  bossGeom.rotateX(Math.PI / 2);
-  bossGeom.translate(0, bossCenterY, -(t + D + t + screw.bossLength / 2));
-  brush = union(brush, toBrush(bossGeom));
+  const clampBottom = t + H; // arm attaches here
+  const clampTop = clampBottom + B;
+
+  let brush = toBrush(makeBox(w, -L, t, 0, t)); // shelf
+  if (curl > 0) {
+    brush = union(brush, toBrush(makeBox(w, -L, -L + t, t, t + curl))); // end-stop
+  }
+  brush = union(brush, toBrush(makeBox(w, 0, t, t, clampTop))); // arm + front wall of clamp
+  brush = union(brush, toBrush(makeBox(w, 0, D + t + Tb, clampTop - t, clampTop))); // floor, at the top of the band
+  brush = union(brush, toBrush(makeBox(w, t + D, t + D + Tb, clampBottom, clampTop))); // back wall
+
+  const bossCenterY = clampBottom + B / 2;
+  const backOuterZProfile = t + D + Tb;
 
   const holeMinor = screw.nominalDiameter / 2 - screw.threadDepth + screw.clearance;
   const holeMajor = screw.nominalDiameter / 2 + screw.clearance;

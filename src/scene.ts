@@ -82,18 +82,16 @@ export class Viewport {
     if (!this.current) return;
     const { params, screw, boss } = this.current;
     if (this.layout === 'print') {
-      // Lay the hook flat-ish for viewing and place the screw beside it, as they'd
-      // be arranged as two separate bodies on a print bed.
+      // Recommended print orientation: hook upright as modeled, screw standing on its
+      // (larger, hand-tightened) head with the threaded tip pointing up — the usual way
+      // to print a screw so every layer is a full thread cross-section, no overhangs.
       this.hookMesh.position.set(0, 0, 0);
       this.hookMesh.rotation.set(0, 0, 0);
 
       const gap = 20;
-      this.screwMesh.position.set(
-        params.partWidth / 2 + gap + screw.headDiameter / 2,
-        screw.headDiameter / 2,
-        0,
-      );
-      this.screwMesh.rotation.set(0, Math.PI / 2, 0);
+      const screwSpan = screw.length + screw.headHeight;
+      this.screwMesh.position.set(params.partWidth / 2 + gap + screw.headDiameter / 2, screwSpan, 0);
+      this.screwMesh.rotation.set(Math.PI / 2, 0, 0);
     } else {
       // Thread the screw into the boss from the back, roughly to the tightened position.
       this.hookMesh.position.set(0, 0, 0);

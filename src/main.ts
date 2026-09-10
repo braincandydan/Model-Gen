@@ -3,7 +3,7 @@ import { buildModel } from './geometry/model';
 import { Viewport } from './scene';
 import { mountPanel } from './ui/panel';
 import { downloadBothAsZip, downloadStl } from './export/stl';
-import type { HookParams } from './params';
+import { DEFAULT_PARAMS, type HookParams } from './params';
 
 const canvasHost = document.getElementById('canvas-host')!;
 const panelEl = document.getElementById('panel')!;
@@ -11,15 +11,7 @@ const toolbarEl = document.getElementById('viewport-toolbar')!;
 
 const viewport = new Viewport(canvasHost);
 
-let current = buildModel({
-  hookHeight: 55,
-  hookLipDepth: 28,
-  clampBandHeight: 32,
-  engagementDepth: 18,
-  partWidth: 24,
-  wallThickness: 3.2,
-  material: 'PLA',
-});
+let current = buildModel(DEFAULT_PARAMS);
 
 const panel = mountPanel(panelEl, toolbarEl, {
   onChange: (params: HookParams) => {
