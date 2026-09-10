@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { buildThreadedRod } from './thread';
 import type { ScrewSpec } from '../params';
 
-/** The standalone printable set-screw: shaft + trapezoidal threads + tip + knurled thumb head. */
+/** The standalone printable set-screw: shaft + trapezoidal threads + flat-point tip + ribbed thumb head. */
 export function buildScrewSolid(screw: ScrewSpec): THREE.BufferGeometry {
   return buildThreadedRod({
     minorRadius: screw.nominalDiameter / 2 - screw.threadDepth,
@@ -12,6 +12,6 @@ export function buildScrewSolid(screw: ScrewSpec): THREE.BufferGeometry {
     tip: true,
     headDiameter: screw.headDiameter,
     headHeight: screw.headHeight,
-    headSegments: 10,
+    headRibCount: 16,
   });
 }

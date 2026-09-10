@@ -93,6 +93,63 @@ export function buildThreadedCylinderGeometry(o: ThreadedCylinderOptions): THREE
   return geometry;
 }
 
+interface RibbedCylinderOptions {
+  baseRadius: number;
+  ribHeight: number;
+  ribCount: number;
+  length: number;
+  angularSegments?: number;
+}
+
+/**
+ * A cylinder with rounded ribs running its full length (radius varies with angle only,
+ * not z) — a knurled-knob grip, much easier to hand-tighten than a smooth or lightly
+ * faceted cylinder. Built the same ring/cap way as buildThreadedCylinderGeometry, so it
+ * inherits the same verified-correct (outward-facing) winding.
+ */
+function buildRibbedCylinderGeometry(o: RibbedCylinderOptions): THREE.BufferGeometry {
+  const N = o.angularSegments ?? Math.max(64, o.ribCount * 8);
+  const rings: THREE.Vector3[][] = [[], []];
+  const zs = [0, o.length];
+  for (let ri = 0; ri < 2; ri++) {
+    const z = zs[ri];
+    for (let k = 0; k < N; k++) {
+      const phi = (k / N) * Math.PI * 2;
+      const r = o.baseRadius + (o.ribHeight / 2) * (1 + Math.cos(phi * o.ribCount));
+      rings[ri].push(new THREE.Vector3(r * Math.cos(phi), r * Math.sin(phi), z));
+    }
+  }
+
+  const positions: number[] = [];
+  const pushTri = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) => {
+    positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+  };
+
+  const [first, last] = rings;
+  for (let k = 0; k < N; k++) {
+    const k2 = (k + 1) % N;
+    pushTri(first[k], first[k2], last[k2]);
+    pushTri(first[k], last[k2], last[k]);
+  }
+
+  const startCenter = new THREE.Vector3(0, 0, 0);
+  for (let k = 0; k < N; k++) {
+    const k2 = (k + 1) % N;
+    pushTri(startCenter, first[k2], first[k]);
+  }
+
+  const endCenter = new THREE.Vector3(0, 0, o.length);
+  for (let k = 0; k < N; k++) {
+    const k2 = (k + 1) % N;
+    pushTri(endCenter, last[k], last[k2]);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 export interface ThreadedRodOptions {
   minorRadius: number;
   majorRadius: number;
@@ -103,7 +160,7 @@ export interface ThreadedRodOptions {
   tip?: boolean; // flat-point tip at z=0 (full contact against whatever it presses on, no cone digging in)
   headDiameter?: number;
   headHeight?: number;
-  headSegments?: number; // low count = faceted "knurled" grip
+  headRibCount?: number; // ribbed grip ridges around the head; 0/undefined = plain cylinder
 }
 
 /** Threaded shaft (+ optional lead-in tip / thumb head), unioned into one solid. Axis = Z, spans [0, length] (plus head beyond `length`, plus tip slightly before 0). */
@@ -125,17 +182,23 @@ export function buildThreadedRod(o: ThreadedRodOptions): THREE.BufferGeometry {
   }
 
   if (o.headDiameter && o.headHeight) {
-    const headGeom = new THREE.CylinderGeometry(
-      o.headDiameter / 2,
-      o.headDiameter / 2,
-      o.headHeight,
-      o.headSegments ?? 16,
-      1,
-      false,
-    );
-    headGeom.rotateX(Math.PI / 2);
-    headGeom.translate(0, 0, o.length + o.headHeight / 2 - OVERLAP);
-    brush = union(brush, toBrush(headGeom));
+    const ribCount = o.headRibCount ?? 0;
+    if (ribCount > 0) {
+      // Already built along Z, spanning [0, headHeight] — no rotation needed.
+      const headGeom = buildRibbedCylinderGeometry({
+        baseRadius: o.headDiameter / 2,
+        ribHeight: o.headDiameter * 0.08,
+        ribCount,
+        length: o.headHeight,
+      });
+      headGeom.translate(0, 0, o.length - OVERLAP);
+      brush = union(brush, toBrush(headGeom));
+    } else {
+      const headGeom = new THREE.CylinderGeometry(o.headDiameter / 2, o.headDiameter / 2, o.headHeight, 32);
+      headGeom.rotateX(Math.PI / 2);
+      headGeom.translate(0, 0, o.length + o.headHeight / 2 - OVERLAP);
+      brush = union(brush, toBrush(headGeom));
+    }
   }
 
   return cleanupGeometry(brush.geometry.clone());
