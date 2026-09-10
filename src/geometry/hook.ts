@@ -203,56 +203,61 @@ export function buildHookBody(p: HookParams, screw: ScrewSpec): HookBuildResult 
     const gapInnerZ = -(t + D); // world_z where the back wall's inner (gap-facing) face sits
     const floorBottomY = clampTop - t; // underside of the floor's cantilevered overhang
 
-    const wedges: THREE.BufferGeometry[] = [
+    // Each wedge is a factory taking the bevel to build it with, not a pre-built
+    // geometry — see the retry loop below for why: when a cut is rejected, retrying
+    // with the exact same geometry would just be rejected again, so it needs to be
+    // rebuilt with a slightly different bevel each attempt.
+    type WedgeFactory = (b: number) => THREE.BufferGeometry;
+    const wedges: WedgeFactory[] = [
       // front-left / front-right, running the full arm height
-      buildFilletWedge(hw, -1, frontZ, -1, bevel, filletSegments, mapVertical, t, clampTop),
-      buildFilletWedge(-hw, 1, frontZ, -1, bevel, filletSegments, mapVertical, t, clampTop),
+      (b) => buildFilletWedge(hw, -1, frontZ, -1, b, filletSegments, mapVertical, t, clampTop),
+      (b) => buildFilletWedge(-hw, 1, frontZ, -1, b, filletSegments, mapVertical, t, clampTop),
       // tip-left / tip-right, running the full shelf + end-stop height
-      buildFilletWedge(hw, -1, tipZ, -1, bevel, filletSegments, mapVertical, 0, t + curl),
-      buildFilletWedge(-hw, 1, tipZ, -1, bevel, filletSegments, mapVertical, 0, t + curl),
+      (b) => buildFilletWedge(hw, -1, tipZ, -1, b, filletSegments, mapVertical, 0, t + curl),
+      (b) => buildFilletWedge(-hw, 1, tipZ, -1, b, filletSegments, mapVertical, 0, t + curl),
       // back-left / back-right, running the full back-wall height
-      buildFilletWedge(hw, -1, backZ, 1, bevel, filletSegments, mapVertical, clampBottom, clampTop),
-      buildFilletWedge(-hw, 1, backZ, 1, bevel, filletSegments, mapVertical, clampBottom, clampTop),
+      (b) => buildFilletWedge(hw, -1, backZ, 1, b, filletSegments, mapVertical, clampBottom, clampTop),
+      (b) => buildFilletWedge(-hw, 1, backZ, 1, b, filletSegments, mapVertical, clampBottom, clampTop),
       // top-front / top-back, running the full width
-      buildFilletWedge(clampTop, -1, frontZ, -1, bevel, filletSegments, mapHorizontal, -hw, hw),
-      buildFilletWedge(clampTop, -1, backZ, 1, bevel, filletSegments, mapHorizontal, -hw, hw),
+      (b) => buildFilletWedge(clampTop, -1, frontZ, -1, b, filletSegments, mapHorizontal, -hw, hw),
+      (b) => buildFilletWedge(clampTop, -1, backZ, 1, b, filletSegments, mapHorizontal, -hw, hw),
       // top-left / top-right of the clamp block, running the full depth of the band
-      buildFilletWedge(hw, -1, clampTop, -1, bevel, filletSegments, mapDepth, backZ, frontZ),
-      buildFilletWedge(-hw, 1, clampTop, -1, bevel, filletSegments, mapDepth, backZ, frontZ),
+      (b) => buildFilletWedge(hw, -1, clampTop, -1, b, filletSegments, mapDepth, backZ, frontZ),
+      (b) => buildFilletWedge(-hw, 1, clampTop, -1, b, filletSegments, mapDepth, backZ, frontZ),
       // shelf-left / shelf-right, running the lip's exposed length (its top-side edge)
-      buildFilletWedge(hw, -1, t, -1, bevel, filletSegments, mapDepth, shelfSideZStart, shelfSideZEnd),
-      buildFilletWedge(-hw, 1, t, -1, bevel, filletSegments, mapDepth, shelfSideZStart, shelfSideZEnd),
+      (b) => buildFilletWedge(hw, -1, t, -1, b, filletSegments, mapDepth, shelfSideZStart, shelfSideZEnd),
+      (b) => buildFilletWedge(-hw, 1, t, -1, b, filletSegments, mapDepth, shelfSideZStart, shelfSideZEnd),
       // back-wall-inner-left / -right: where the back wall's gap-facing inner face meets
       // its own side face (separate from back-left/right, which is its far outer corner)
-      buildFilletWedge(hw, -1, gapInnerZ, -1, bevel, filletSegments, mapVertical, clampBottom, floorBottomY),
-      buildFilletWedge(-hw, 1, gapInnerZ, -1, bevel, filletSegments, mapVertical, clampBottom, floorBottomY),
+      (b) => buildFilletWedge(hw, -1, gapInnerZ, -1, b, filletSegments, mapVertical, clampBottom, floorBottomY),
+      (b) => buildFilletWedge(-hw, 1, gapInnerZ, -1, b, filletSegments, mapVertical, clampBottom, floorBottomY),
       // back-wall-bottom-left / -right: the underside of the back wall, which isn't backed
       // by anything below it
-      buildFilletWedge(hw, -1, clampBottom, 1, bevel, filletSegments, mapDepth, backZ, gapInnerZ),
-      buildFilletWedge(-hw, 1, clampBottom, 1, bevel, filletSegments, mapDepth, backZ, gapInnerZ),
+      (b) => buildFilletWedge(hw, -1, clampBottom, 1, b, filletSegments, mapDepth, backZ, gapInnerZ),
+      (b) => buildFilletWedge(-hw, 1, clampBottom, 1, b, filletSegments, mapDepth, backZ, gapInnerZ),
       // arm/shelf-back-left / -right: the other long side edge, opposite frontZ — this
       // and the next two pairs are the ones opposite an already-beveled face across a
       // `t`-thick wall (see the bevelMax comment above for why they use the same,
       // already-safe `bevel` rather than a separately-shrunk amount)
-      buildFilletWedge(hw, -1, -t, 1, bevel, filletSegments, mapVertical, 0, floorBottomY),
-      buildFilletWedge(-hw, 1, -t, 1, bevel, filletSegments, mapVertical, 0, floorBottomY),
+      (b) => buildFilletWedge(hw, -1, -t, 1, b, filletSegments, mapVertical, 0, floorBottomY),
+      (b) => buildFilletWedge(-hw, 1, -t, 1, b, filletSegments, mapVertical, 0, floorBottomY),
       // shelf-bottom-left / -right: the lip's underside side edge
-      buildFilletWedge(hw, -1, 0, 1, bevel, filletSegments, mapDepth, shelfSideZStart, tipZ),
-      buildFilletWedge(-hw, 1, 0, 1, bevel, filletSegments, mapDepth, shelfSideZStart, tipZ),
+      (b) => buildFilletWedge(hw, -1, 0, 1, b, filletSegments, mapDepth, shelfSideZStart, tipZ),
+      (b) => buildFilletWedge(-hw, 1, 0, 1, b, filletSegments, mapDepth, shelfSideZStart, tipZ),
       // floor-bottom-left / -right: the underside of the floor's cantilevered overhang
-      buildFilletWedge(hw, -1, floorBottomY, 1, bevel, filletSegments, mapDepth, gapInnerZ, -t),
-      buildFilletWedge(-hw, 1, floorBottomY, 1, bevel, filletSegments, mapDepth, gapInnerZ, -t),
+      (b) => buildFilletWedge(hw, -1, floorBottomY, 1, b, filletSegments, mapDepth, gapInnerZ, -t),
+      (b) => buildFilletWedge(-hw, 1, floorBottomY, 1, b, filletSegments, mapDepth, gapInnerZ, -t),
     ];
 
     if (curl > 0) {
       // end-stop-left / end-stop-right, covering the short length the shelf bevel above leaves out
       wedges.push(
-        buildFilletWedge(hw, -1, t + curl, -1, bevel, filletSegments, mapDepth, tipZ - t, tipZ),
-        buildFilletWedge(-hw, 1, t + curl, -1, bevel, filletSegments, mapDepth, tipZ - t, tipZ),
+        (b) => buildFilletWedge(hw, -1, t + curl, -1, b, filletSegments, mapDepth, tipZ - t, tipZ),
+        (b) => buildFilletWedge(-hw, 1, t + curl, -1, b, filletSegments, mapDepth, tipZ - t, tipZ),
         // end-stop-back-left / -right: its own back vertical edge, between the shelf-top
         // bevel (below) and the end-stop-top bevel (above)
-        buildFilletWedge(hw, -1, tipZ - t, 1, bevel, filletSegments, mapVertical, t, t + curl),
-        buildFilletWedge(-hw, 1, tipZ - t, 1, bevel, filletSegments, mapVertical, t, t + curl),
+        (b) => buildFilletWedge(hw, -1, tipZ - t, 1, b, filletSegments, mapVertical, t, t + curl),
+        (b) => buildFilletWedge(-hw, 1, tipZ - t, 1, b, filletSegments, mapVertical, t, t + curl),
       );
     }
     // three-bvh-csg is documented elsewhere in this file as fragile for complex
@@ -262,24 +267,34 @@ export function buildHookBody(p: HookParams, screw: ScrewSpec): HookBuildResult 
     // subtraction produces a degenerate result that spikes far outside the model's
     // real bounds, instead of the small local cut it's supposed to be. Since which
     // wedge and which value is unpredictable, guard generically: after each cut,
-    // reject it and keep the solid as it was if the result has grown past the
-    // model's own known bounds (with a small tolerance for the rounding the bevel
-    // itself is supposed to add) — a rare edge staying sharp beats a broken part.
+    // check the result against the model's own known bounds (with a small tolerance
+    // for the rounding the bevel itself is supposed to add). A rejected cut is
+    // retried with the bevel nudged by a fraction of a percent — these failures are
+    // exact numerical coincidences (confirmed by the sweep), so a tiny perturbation
+    // almost always produces a visually-identical but numerically distinct cut that
+    // succeeds, rather than just leaving that one edge sharp.
     const maxBoundsGrowth = bevel + 0.5;
     const expectedBounds = { maxX: hw, minX: -hw, maxY: clampTop, maxZ: tipZ, minZ: backZ };
-    for (const wedge of wedges) {
-      const candidate = subtract(brush, toBrush(wedge));
-      const cb = candidate.geometry;
-      cb.computeBoundingBox();
-      const bb = cb.boundingBox!;
-      const inBounds =
+    const isInBounds = (geom: THREE.BufferGeometry) => {
+      geom.computeBoundingBox();
+      const bb = geom.boundingBox!;
+      return (
         bb.max.x <= expectedBounds.maxX + maxBoundsGrowth &&
         bb.min.x >= expectedBounds.minX - maxBoundsGrowth &&
         bb.max.y <= expectedBounds.maxY + maxBoundsGrowth &&
         bb.max.z <= expectedBounds.maxZ + maxBoundsGrowth &&
-        bb.min.z >= expectedBounds.minZ - maxBoundsGrowth;
-      if (inBounds) {
-        brush = candidate;
+        bb.min.z >= expectedBounds.minZ - maxBoundsGrowth
+      );
+    };
+    const retryScales = [1, 0.995, 1.005, 0.99, 1.01, 0.98, 1.02, 0.95, 1.05];
+    for (const wedge of wedges) {
+      for (const scale of retryScales) {
+        const candidate = subtract(brush, toBrush(wedge(bevel * scale)));
+        if (isInBounds(candidate.geometry)) {
+          brush = candidate;
+          break;
+        }
+        // last attempt failed too — that edge stays sharp for this exact configuration
       }
     }
   }
