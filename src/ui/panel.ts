@@ -19,6 +19,7 @@ export interface PanelCallbacks {
 
 export interface PanelHandle {
   updateSpec: (screw: ScrewSpec) => void;
+  setZipReady: (ready: boolean) => void;
 }
 
 export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: PanelCallbacks): PanelHandle {
@@ -197,9 +198,11 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
   btnScrew.textContent = 'Download screw.stl';
   btnScrew.addEventListener('click', cb.onExportScrew);
 
+  const btnZipLabel = 'Download both (.zip)';
   const btnZip = document.createElement('button');
   btnZip.className = 'primary';
-  btnZip.textContent = 'Download both (.zip)';
+  btnZip.textContent = btnZipLabel;
+  btnZip.disabled = true; // enabled once the zip is actually ready — see setZipReady below
   btnZip.addEventListener('click', cb.onExportZip);
 
   exportRow.appendChild(btnZip);
@@ -288,6 +291,10 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
           ? `Raised to ${screw.clampBandHeightMin.toFixed(1)} mm — the minimum band height for a ${screw.nominalDiameter.toFixed(0)}mm screw to stay enclosed`
           : '';
       }
+    },
+    setZipReady(ready: boolean) {
+      btnZip.disabled = !ready;
+      btnZip.textContent = ready ? btnZipLabel : 'Preparing…';
     },
   };
 }

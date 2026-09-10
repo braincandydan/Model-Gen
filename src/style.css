@@ -237,6 +237,23 @@ button.primary:hover {
   filter: brightness(1.08);
 }
 
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+  filter: none;
+}
+
+button:disabled:hover {
+  background: unset;
+  filter: none;
+}
+
+button.primary:disabled {
+  background: var(--panel-border);
+  border-color: var(--panel-border);
+  color: var(--text-dim);
+}
+
 .toolbar-btn {
   background: rgba(20, 22, 26, 0.75);
   border: 1px solid var(--panel-border);
