@@ -42,7 +42,7 @@ export const DEFAULT_PARAMS: HookParams = {
   engagementDepth: 18,
   screwEngagementDepth: 22,
   screwDiameter: 12,
-  hookBevel: 2,
+  hookBevel: 0,
   screwBevel: 0,
   partWidth: 24,
   wallThickness: 3.2,
