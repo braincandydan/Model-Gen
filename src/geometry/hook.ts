@@ -166,7 +166,16 @@ export function buildHookBody(p: HookParams, screw: ScrewSpec): HookBuildResult 
   // the boxes before the unions above (see the top-of-file note on why). The bevel size
   // is user-controlled (0 = skip this whole pass, sharp corners everywhere) but capped
   // so it can never exceed what the current wall thickness can safely take.
-  const bevelMax = t * 0.9;
+  //
+  // Some edges (the arm's front vs. back, the shelf's top vs. bottom, the floor's top
+  // vs. bottom) are opposite faces of a wall that's only `t` thick — bevel-ing both
+  // needs 2*bevel to fit inside that wall, or the two cuts overlap and break the CSG
+  // subtraction. Capping every edge to half of that (rather than giving the "front"
+  // edges a bigger bevel and the "back" edges a shrinking leftover) means one uniform
+  // bevel size everywhere that's never at risk of one side losing its bevel as the
+  // slider goes up — the earlier version had exactly that bug: the opposite-face edges'
+  // bevel shrank toward zero as the main bevel approached its own, larger cap.
+  const bevelMax = Math.max(0, (t - 0.3) / 2);
   const bevel = Math.min(p.hookBevel, bevelMax);
   const filletSegments = 4; // faceted quarter-circle approximation, not a single flat chamfer
   const tipZ = L; // world_z of the shelf/end-stop tip
@@ -221,30 +230,20 @@ export function buildHookBody(p: HookParams, screw: ScrewSpec): HookBuildResult 
       // by anything below it
       buildFilletWedge(hw, -1, clampBottom, 1, bevel, filletSegments, mapDepth, backZ, gapInnerZ),
       buildFilletWedge(-hw, 1, clampBottom, 1, bevel, filletSegments, mapDepth, backZ, gapInnerZ),
+      // arm/shelf-back-left / -right: the other long side edge, opposite frontZ — this
+      // and the next two pairs are the ones opposite an already-beveled face across a
+      // `t`-thick wall (see the bevelMax comment above for why they use the same,
+      // already-safe `bevel` rather than a separately-shrunk amount)
+      buildFilletWedge(hw, -1, -t, 1, bevel, filletSegments, mapVertical, 0, floorBottomY),
+      buildFilletWedge(-hw, 1, -t, 1, bevel, filletSegments, mapVertical, 0, floorBottomY),
+      // shelf-bottom-left / -right: the lip's underside side edge
+      buildFilletWedge(hw, -1, 0, 1, bevel, filletSegments, mapDepth, shelfSideZStart, tipZ),
+      buildFilletWedge(-hw, 1, 0, 1, bevel, filletSegments, mapDepth, shelfSideZStart, tipZ),
+      // floor-bottom-left / -right: the underside of the floor's cantilevered overhang
+      buildFilletWedge(hw, -1, floorBottomY, 1, bevel, filletSegments, mapDepth, gapInnerZ, -t),
+      buildFilletWedge(-hw, 1, floorBottomY, 1, bevel, filletSegments, mapDepth, gapInnerZ, -t),
     ];
 
-    // Three more edges — the arm's back edge (z=-t), the shelf's bottom edge (y=0), and
-    // the floor's underside (y=clampTop-t) — sit opposite an already-beveled face across
-    // a wall that's only `t` thick (the arm's own depth, the shelf's own height, the
-    // floor's own height). The full `bevel` cut on both faces of a wall thinner than
-    // 2*bevel makes the two cuts overlap and breaks the CSG subtraction (confirmed by
-    // testing it), so use whatever bevel still leaves a safety margin past the opposite
-    // face's existing cut, shrinking toward no cut at all if the wall is too thin for
-    // that to leave anything.
-    const thinBevel = Math.max(0, Math.min(bevel, t - bevel - 0.3));
-    if (thinBevel > 0.15) {
-      wedges.push(
-        // arm/shelf-back-left / -right: the other long side edge, opposite frontZ
-        buildFilletWedge(hw, -1, -t, 1, thinBevel, filletSegments, mapVertical, 0, floorBottomY),
-        buildFilletWedge(-hw, 1, -t, 1, thinBevel, filletSegments, mapVertical, 0, floorBottomY),
-        // shelf-bottom-left / -right: the lip's underside side edge
-        buildFilletWedge(hw, -1, 0, 1, thinBevel, filletSegments, mapDepth, shelfSideZStart, tipZ),
-        buildFilletWedge(-hw, 1, 0, 1, thinBevel, filletSegments, mapDepth, shelfSideZStart, tipZ),
-        // floor-bottom-left / -right: the underside of the floor's cantilevered overhang
-        buildFilletWedge(hw, -1, floorBottomY, 1, thinBevel, filletSegments, mapDepth, gapInnerZ, -t),
-        buildFilletWedge(-hw, 1, floorBottomY, 1, thinBevel, filletSegments, mapDepth, gapInnerZ, -t),
-      );
-    }
     if (curl > 0) {
       // end-stop-left / end-stop-right, covering the short length the shelf bevel above leaves out
       wedges.push(
@@ -256,8 +255,32 @@ export function buildHookBody(p: HookParams, screw: ScrewSpec): HookBuildResult 
         buildFilletWedge(-hw, 1, tipZ - t, 1, bevel, filletSegments, mapVertical, t, t + curl),
       );
     }
+    // three-bvh-csg is documented elsewhere in this file as fragile for complex
+    // geometry, and with this many sequential wedge cuts it occasionally proves it:
+    // at isolated, seemingly arbitrary bevel values (not a pattern tied to any
+    // particular margin — confirmed by sweeping the whole range) a single wedge
+    // subtraction produces a degenerate result that spikes far outside the model's
+    // real bounds, instead of the small local cut it's supposed to be. Since which
+    // wedge and which value is unpredictable, guard generically: after each cut,
+    // reject it and keep the solid as it was if the result has grown past the
+    // model's own known bounds (with a small tolerance for the rounding the bevel
+    // itself is supposed to add) — a rare edge staying sharp beats a broken part.
+    const maxBoundsGrowth = bevel + 0.5;
+    const expectedBounds = { maxX: hw, minX: -hw, maxY: clampTop, maxZ: tipZ, minZ: backZ };
     for (const wedge of wedges) {
-      brush = subtract(brush, toBrush(wedge));
+      const candidate = subtract(brush, toBrush(wedge));
+      const cb = candidate.geometry;
+      cb.computeBoundingBox();
+      const bb = cb.boundingBox!;
+      const inBounds =
+        bb.max.x <= expectedBounds.maxX + maxBoundsGrowth &&
+        bb.min.x >= expectedBounds.minX - maxBoundsGrowth &&
+        bb.max.y <= expectedBounds.maxY + maxBoundsGrowth &&
+        bb.max.z <= expectedBounds.maxZ + maxBoundsGrowth &&
+        bb.min.z >= expectedBounds.minZ - maxBoundsGrowth;
+      if (inBounds) {
+        brush = candidate;
+      }
     }
   }
 
