@@ -29,7 +29,7 @@ function refreshZip() {
 function refreshModel(params: HookParams) {
   current = buildModel(params);
   viewport.setModel(current);
-  panel.updateSpec(current.screw);
+  panel.updateSpec(current.screw, { hookBevelMax: current.hookBevelMax, screwBevelMax: current.screwBevelMax });
   refreshZip();
 }
 
@@ -42,5 +42,5 @@ const panel = mountPanel(panelEl, toolbarEl, {
 });
 
 viewport.setModel(current);
-panel.updateSpec(current.screw);
+panel.updateSpec(current.screw, { hookBevelMax: current.hookBevelMax, screwBevelMax: current.screwBevelMax });
 refreshZip();

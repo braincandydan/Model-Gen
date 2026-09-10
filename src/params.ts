@@ -11,6 +11,8 @@ export interface HookParams {
   engagementDepth: number; // front-to-back thickness of the piece being clamped
   screwEngagementDepth: number; // how deep the screw threads into the back wall (independent of print wall thickness; floored to a safe minimum for the current screw size)
   screwDiameter: number; // nominal screw thread diameter (mm), user-chosen — independent of everything else
+  hookBevel: number; // rounded-edge size on the hook's hard edges, mm (0 = sharp corners, no bevel at all)
+  screwBevel: number; // rounded-edge size on the screw head's hard edges, mm (0 = sharp corners)
   // Overall / print
   partWidth: number; // width of the whole part (left-right)
   wallThickness: number; // thickness of every printed wall/lip
@@ -40,6 +42,8 @@ export const DEFAULT_PARAMS: HookParams = {
   engagementDepth: 18,
   screwEngagementDepth: 22,
   screwDiameter: 12,
+  hookBevel: 2,
+  screwBevel: 0,
   partWidth: 24,
   wallThickness: 3.2,
   material: 'PLA',
@@ -70,6 +74,8 @@ export const PARAM_LIMITS: Record<
     label: 'Screw grip depth',
     unit: 'mm',
   },
+  hookBevel: { min: 0, max: 4, step: 0.25, label: 'Hook bevel (0 = sharp corners)', unit: 'mm' },
+  screwBevel: { min: 0, max: 3, step: 0.25, label: 'Screw bevel (0 = sharp corners)', unit: 'mm' },
   partWidth: { min: 12, max: 100, step: 1, label: 'Overall width', unit: 'mm' },
   wallThickness: { min: 2, max: 8, step: 0.1, label: 'Print wall thickness', unit: 'mm' },
 };

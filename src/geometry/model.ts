@@ -9,11 +9,13 @@ export interface BuiltModel {
   screw: ScrewSpec;
   boss: { centerY: number; backZProfile: number };
   params: HookParams;
+  hookBevelMax: number; // the cap the hook bevel slider got clamped to, for the UI note
+  screwBevelMax: number;
 }
 
 export function buildModel(params: HookParams): BuiltModel {
   const screw = deriveScrewSpec(params);
-  const { geometry: hookGeometry, boss } = buildHookBody(params, screw);
-  const screwGeometry = buildScrewSolid(screw);
-  return { hookGeometry, screwGeometry, screw, boss, params };
+  const { geometry: hookGeometry, boss, bevelMax: hookBevelMax } = buildHookBody(params, screw);
+  const { geometry: screwGeometry, bevelMax: screwBevelMax } = buildScrewSolid(params, screw);
+  return { hookGeometry, screwGeometry, screw, boss, params, hookBevelMax, screwBevelMax };
 }

@@ -93,55 +93,86 @@ export function buildThreadedCylinderGeometry(o: ThreadedCylinderOptions): THREE
   return geometry;
 }
 
-interface RibbedCylinderOptions {
-  baseRadius: number;
-  ribHeight: number;
-  ribCount: number;
+interface CappedCylinderOptions {
+  radiusFn: (phi: number) => number; // radius at angle phi, before any bevel taper
   length: number;
+  topBevel?: number; // rounds the z=length edge — 0/undefined = sharp flat cap
+  bottomBevel?: number; // rounds the z=0 edge
   angularSegments?: number;
+  bevelSegments?: number; // arc facets per rounded edge, same idea as the hook's fillets
 }
 
 /**
- * A cylinder with rounded ribs running its full length (radius varies with angle only,
- * not z) — a knurled-knob grip, much easier to hand-tighten than a smooth or lightly
- * faceted cylinder. Built the same ring/cap way as buildThreadedCylinderGeometry, so it
- * inherits the same verified-correct (outward-facing) winding.
+ * A cylinder (or, via radiusFn, a ribbed/knurled one) with each flat end either left as
+ * a sharp cap or rounded off with a quarter-circle fillet — the same faceted-arc idea as
+ * the hook's edge bevels, just revolved around an axis instead of extruded along one.
+ * Built the same ring/cap way as buildThreadedCylinderGeometry, so it inherits the same
+ * verified-correct (outward-facing) winding.
  */
-function buildRibbedCylinderGeometry(o: RibbedCylinderOptions): THREE.BufferGeometry {
-  const N = o.angularSegments ?? Math.max(64, o.ribCount * 8);
-  const rings: THREE.Vector3[][] = [[], []];
-  const zs = [0, o.length];
-  for (let ri = 0; ri < 2; ri++) {
-    const z = zs[ri];
+function buildCappedCylinderGeometry(o: CappedCylinderOptions): THREE.BufferGeometry {
+  const N = o.angularSegments ?? 64;
+  const bevelSegs = o.bevelSegments ?? 4;
+  const topBevel = o.topBevel ?? 0;
+  const bottomBevel = o.bottomBevel ?? 0;
+
+  // (z, delta) pairs from bottom to top, where delta is how much to subtract from
+  // radiusFn(phi) at that z — 0 through the flat middle, tapering up to the full bevel
+  // right at a rounded cap (theta=0 there matches the cap; theta=PI/2 matches the side).
+  const zDelta: { z: number; delta: number }[] = [];
+  if (bottomBevel > 0.001) {
+    for (let i = 0; i <= bevelSegs; i++) {
+      const theta = (i / bevelSegs) * (Math.PI / 2);
+      zDelta.push({ z: bottomBevel * (1 - Math.cos(theta)), delta: bottomBevel * (1 - Math.sin(theta)) });
+    }
+  } else {
+    zDelta.push({ z: 0, delta: 0 });
+  }
+  if (topBevel > 0.001) {
+    for (let i = bevelSegs; i >= 0; i--) {
+      const theta = (i / bevelSegs) * (Math.PI / 2);
+      zDelta.push({ z: o.length - topBevel * (1 - Math.cos(theta)), delta: topBevel * (1 - Math.sin(theta)) });
+    }
+  } else {
+    zDelta.push({ z: o.length, delta: 0 });
+  }
+
+  const rings: THREE.Vector3[][] = zDelta.map(({ z, delta }) => {
+    const ring: THREE.Vector3[] = [];
     for (let k = 0; k < N; k++) {
       const phi = (k / N) * Math.PI * 2;
-      const r = o.baseRadius + (o.ribHeight / 2) * (1 + Math.cos(phi * o.ribCount));
-      rings[ri].push(new THREE.Vector3(r * Math.cos(phi), r * Math.sin(phi), z));
+      const r = Math.max(0, o.radiusFn(phi) - delta);
+      ring.push(new THREE.Vector3(r * Math.cos(phi), r * Math.sin(phi), z));
     }
-  }
+    return ring;
+  });
 
   const positions: number[] = [];
   const pushTri = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) => {
     positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
   };
 
-  const [first, last] = rings;
-  for (let k = 0; k < N; k++) {
-    const k2 = (k + 1) % N;
-    pushTri(first[k], first[k2], last[k2]);
-    pushTri(first[k], last[k2], last[k]);
+  for (let i = 0; i < rings.length - 1; i++) {
+    const ringA = rings[i];
+    const ringB = rings[i + 1];
+    for (let k = 0; k < N; k++) {
+      const k2 = (k + 1) % N;
+      pushTri(ringA[k], ringA[k2], ringB[k2]);
+      pushTri(ringA[k], ringB[k2], ringB[k]);
+    }
   }
 
-  const startCenter = new THREE.Vector3(0, 0, 0);
+  const bottomRing = rings[0];
+  const bottomCenter = new THREE.Vector3(0, 0, zDelta[0].z);
   for (let k = 0; k < N; k++) {
     const k2 = (k + 1) % N;
-    pushTri(startCenter, first[k2], first[k]);
+    pushTri(bottomCenter, bottomRing[k2], bottomRing[k]);
   }
 
-  const endCenter = new THREE.Vector3(0, 0, o.length);
+  const topRing = rings[rings.length - 1];
+  const topCenter = new THREE.Vector3(0, 0, zDelta[zDelta.length - 1].z);
   for (let k = 0; k < N; k++) {
     const k2 = (k + 1) % N;
-    pushTri(endCenter, last[k], last[k2]);
+    pushTri(topCenter, topRing[k], topRing[k2]);
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -161,6 +192,7 @@ export interface ThreadedRodOptions {
   headDiameter?: number;
   headHeight?: number;
   headRibCount?: number; // ribbed grip ridges around the head; 0/undefined = plain cylinder
+  headBevel?: number; // rounds the head's top and bottom edges; 0/undefined = sharp
 }
 
 /** Threaded shaft (+ optional lead-in tip / thumb head), unioned into one solid. Axis = Z, spans [0, length] (plus head beyond `length`, plus tip slightly before 0). */
@@ -183,22 +215,21 @@ export function buildThreadedRod(o: ThreadedRodOptions): THREE.BufferGeometry {
 
   if (o.headDiameter && o.headHeight) {
     const ribCount = o.headRibCount ?? 0;
-    if (ribCount > 0) {
-      // Already built along Z, spanning [0, headHeight] — no rotation needed.
-      const headGeom = buildRibbedCylinderGeometry({
-        baseRadius: o.headDiameter / 2,
-        ribHeight: o.headDiameter * 0.08,
-        ribCount,
-        length: o.headHeight,
-      });
-      headGeom.translate(0, 0, o.length - OVERLAP);
-      brush = union(brush, toBrush(headGeom));
-    } else {
-      const headGeom = new THREE.CylinderGeometry(o.headDiameter / 2, o.headDiameter / 2, o.headHeight, 32);
-      headGeom.rotateX(Math.PI / 2);
-      headGeom.translate(0, 0, o.length + o.headHeight / 2 - OVERLAP);
-      brush = union(brush, toBrush(headGeom));
-    }
+    const headBevel = o.headBevel ?? 0;
+    const headRadiusFn =
+      ribCount > 0
+        ? (phi: number) => o.headDiameter! / 2 + (o.headDiameter! * 0.08) / 2 * (1 + Math.cos(phi * ribCount))
+        : () => o.headDiameter! / 2;
+    // Already built along Z, spanning [0, headHeight] — no rotation needed.
+    const headGeom = buildCappedCylinderGeometry({
+      radiusFn: headRadiusFn,
+      length: o.headHeight,
+      topBevel: headBevel,
+      bottomBevel: headBevel,
+      angularSegments: ribCount > 0 ? Math.max(64, ribCount * 8) : 64,
+    });
+    headGeom.translate(0, 0, o.length - OVERLAP);
+    brush = union(brush, toBrush(headGeom));
   }
 
   return cleanupGeometry(brush.geometry.clone());

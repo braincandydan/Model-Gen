@@ -17,8 +17,13 @@ export interface PanelCallbacks {
   onExportZip: () => void;
 }
 
+export interface BevelCaps {
+  hookBevelMax: number;
+  screwBevelMax: number;
+}
+
 export interface PanelHandle {
-  updateSpec: (screw: ScrewSpec) => void;
+  updateSpec: (screw: ScrewSpec, bevelCaps: BevelCaps) => void;
   setZipReady: (ready: boolean) => void;
 }
 
@@ -37,17 +42,19 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
   // Grouped in the order a user actually thinks through customizing this: how big
   // overall, then the hanging hook itself, then the clamp/screw that mounts it.
   const groups: { title: string; keys: (keyof typeof PARAM_LIMITS)[] }[] = [
-    { title: 'Overall & print', keys: ['partWidth', 'wallThickness'] },
+    { title: 'Overall & print', keys: ['partWidth', 'wallThickness', 'hookBevel'] },
     { title: 'Hook (the part you hang things on)', keys: ['hookHeight', 'hookLipDepth', 'hookCurlHeight'] },
     {
       title: 'Clamp & screw (mounts to the shelf lip)',
-      keys: ['clampBandHeight', 'clampOffset', 'engagementDepth', 'screwEngagementDepth'],
+      keys: ['clampBandHeight', 'clampOffset', 'engagementDepth', 'screwEngagementDepth', 'screwBevel'],
     },
   ];
 
   const inputs: Partial<Record<keyof HookParams, HTMLInputElement>> = {};
   let screwEngagementNote: HTMLDivElement | null = null;
   let clampBandNote: HTMLDivElement | null = null;
+  let hookBevelNote: HTMLDivElement | null = null;
+  let screwBevelNote: HTMLDivElement | null = null;
   let clampScrewGroupEl: HTMLDivElement | null = null;
 
   for (const group of groups) {
@@ -101,6 +108,16 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
         clampBandNote = document.createElement('div');
         clampBandNote.className = 'field-note';
         field.appendChild(clampBandNote);
+      }
+      if (key === 'hookBevel') {
+        hookBevelNote = document.createElement('div');
+        hookBevelNote.className = 'field-note';
+        field.appendChild(hookBevelNote);
+      }
+      if (key === 'screwBevel') {
+        screwBevelNote = document.createElement('div');
+        screwBevelNote.className = 'field-note';
+        field.appendChild(screwBevelNote);
       }
 
       groupEl.appendChild(field);
@@ -268,7 +285,7 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
   toolbarEl.appendChild(legend);
 
   return {
-    updateSpec(screw: ScrewSpec) {
+    updateSpec(screw: ScrewSpec, bevelCaps: BevelCaps) {
       const raised = screw.backWallThickness <= screw.backWallThicknessMin + 0.01;
       const engagementNote = raised
         ? ` <span title="Raised to the minimum needed so the threads don't strip">(raised to safe minimum)</span>`
@@ -289,6 +306,18 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
         const bandRaised = params.clampBandHeight < screw.clampBandHeightMin - 0.01;
         clampBandNote.textContent = bandRaised
           ? `Raised to ${screw.clampBandHeightMin.toFixed(1)} mm — the minimum band height for a ${screw.nominalDiameter.toFixed(0)}mm screw to stay enclosed`
+          : '';
+      }
+      if (hookBevelNote) {
+        const capped = params.hookBevel > bevelCaps.hookBevelMax + 0.01;
+        hookBevelNote.textContent = capped
+          ? `Reduced to ${bevelCaps.hookBevelMax.toFixed(2)} mm — the largest bevel this wall thickness can take`
+          : '';
+      }
+      if (screwBevelNote) {
+        const capped = params.screwBevel > bevelCaps.screwBevelMax + 0.01;
+        screwBevelNote.textContent = capped
+          ? `Reduced to ${bevelCaps.screwBevelMax.toFixed(2)} mm — the largest bevel this screw head can take`
           : '';
       }
     },
