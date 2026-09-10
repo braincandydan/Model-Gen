@@ -71,11 +71,42 @@ export class Viewport {
     this.screwMesh.geometry.dispose();
     this.screwMesh.geometry = model.screwGeometry;
     this.applyLayout();
+    this.frameToFit();
   }
 
   setLayout(mode: LayoutMode) {
     this.layout = mode;
     this.applyLayout();
+    this.frameToFit();
+  }
+
+  /**
+   * Sliders can grow or reposition the model a lot (e.g. moving the clamp band up
+   * the arm, or lengthening the hook) — the camera used to stay put after construction,
+   * so a big-enough change would silently drift the model out of the fixed view and look
+   * like nothing happened. This re-centers on the current model's bounding box and backs
+   * the camera off to fit it, while keeping the orbit angle/direction the user set.
+   */
+  private frameToFit() {
+    const box = new THREE.Box3();
+    box.expandByObject(this.hookMesh);
+    box.expandByObject(this.screwMesh);
+    if (box.isEmpty()) return;
+
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z, 1);
+    const fov = (this.camera.fov * Math.PI) / 180;
+    const fitDistance = (maxDim / (2 * Math.tan(fov / 2))) * 1.7;
+
+    const direction = this.camera.position.clone().sub(this.controls.target);
+    if (direction.lengthSq() < 1e-6) direction.set(140, 110, 180);
+    direction.normalize();
+
+    this.controls.target.copy(center);
+    this.camera.position.copy(center).add(direction.multiplyScalar(Math.max(fitDistance, 60)));
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
   }
 
   private applyLayout() {
