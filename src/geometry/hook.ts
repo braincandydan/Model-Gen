@@ -172,6 +172,19 @@ export function buildHookBody(p: HookParams, screw: ScrewSpec): HookBuildResult 
   const mapVertical = (x: number, z: number, y: number) => new THREE.Vector3(x, y, z);
   // (y, z) in-plane, extruded along X (horizontal edges)
   const mapHorizontal = (y: number, z: number, x: number) => new THREE.Vector3(x, y, z);
+  // (x, y) in-plane, extruded along Z (edges running front-to-back, e.g. the top-side
+  // edges of the clamp block and the sides of the hook's lip) — the vertical/horizontal
+  // wedges above bevel edges where the extrusion runs along Y or X, but every long edge
+  // that instead runs along Z (front-to-back) was missing this pass entirely, leaving
+  // the flat top/side face's sharp corner running the full depth past where the front
+  // and back bevels stop.
+  const mapDepth = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+
+  // The shelf's top-side edge is exposed from where it meets the arm (world_z = -t)
+  // out to the tip — except where the end-stop sits on top of it near the tip, which
+  // covers the last `t` of that length.
+  const shelfSideZStart = -t;
+  const shelfSideZEnd = curl > 0 ? tipZ - t : tipZ;
 
   const wedges: THREE.BufferGeometry[] = [
     // front-left / front-right, running the full arm height
@@ -186,7 +199,20 @@ export function buildHookBody(p: HookParams, screw: ScrewSpec): HookBuildResult 
     // top-front / top-back, running the full width
     buildFilletWedge(clampTop, -1, frontZ, -1, bevel, filletSegments, mapHorizontal, -hw, hw),
     buildFilletWedge(clampTop, -1, backZ, 1, bevel, filletSegments, mapHorizontal, -hw, hw),
+    // top-left / top-right of the clamp block, running the full depth of the band
+    buildFilletWedge(hw, -1, clampTop, -1, bevel, filletSegments, mapDepth, backZ, frontZ),
+    buildFilletWedge(-hw, 1, clampTop, -1, bevel, filletSegments, mapDepth, backZ, frontZ),
+    // shelf-left / shelf-right, running the lip's exposed length
+    buildFilletWedge(hw, -1, t, -1, bevel, filletSegments, mapDepth, shelfSideZStart, shelfSideZEnd),
+    buildFilletWedge(-hw, 1, t, -1, bevel, filletSegments, mapDepth, shelfSideZStart, shelfSideZEnd),
   ];
+  if (curl > 0) {
+    // end-stop-left / end-stop-right, covering the short length the shelf bevel above leaves out
+    wedges.push(
+      buildFilletWedge(hw, -1, t + curl, -1, bevel, filletSegments, mapDepth, tipZ - t, tipZ),
+      buildFilletWedge(-hw, 1, t + curl, -1, bevel, filletSegments, mapDepth, tipZ - t, tipZ),
+    );
+  }
   for (const wedge of wedges) {
     brush = subtract(brush, toBrush(wedge));
   }
