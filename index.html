@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wall Hook Generator</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <h1>Wall Hook Generator</h1>
+        <p class="subtitle">Parametric hook + set-screw, ready to print</p>
+      </header>
+      <main class="layout">
+        <aside id="panel" class="panel"></aside>
+        <section class="viewport">
+          <div id="canvas-host"></div>
+          <div class="viewport-toolbar" id="viewport-toolbar"></div>
+          <div class="hint" id="hint">drag to orbit · scroll to zoom</div>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
