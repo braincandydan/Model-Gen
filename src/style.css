@@ -89,7 +89,57 @@ body {
   top: 12px;
   left: 12px;
   display: flex;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.toolbar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.toolbar-caption {
+  font-size: 11px;
+  color: var(--text-dim);
+  max-width: 140px;
+  line-height: 1.3;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.toolbar-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: 6px;
+  padding: 6px 10px;
+  background: rgba(20, 22, 26, 0.75);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text);
+  align-self: flex-start;
+}
+
+.toolbar-legend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.swatch-hook {
+  background: #4f8cff;
+}
+
+.swatch-screw {
+  background: #ff9f4f;
 }
 
 .field {
@@ -99,14 +149,33 @@ body {
 .field label {
   display: flex;
   justify-content: space-between;
-  font-size: 12.5px;
-  color: var(--text-dim);
+  font-size: 14px;
+  color: #c3c8d1;
   margin-bottom: 6px;
 }
 
 .field label .val {
   color: var(--text);
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+.field-note {
+  font-size: 12px;
+  color: var(--accent-2);
+  margin-top: 4px;
+  min-height: 1em;
+}
+
+.reset-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.reset-row button {
+  font-size: 12px;
+  padding: 6px 10px;
 }
 
 .field input[type='range'] {

@@ -18,63 +18,92 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
 
   panelEl.innerHTML = '';
 
-  const geomGroup = document.createElement('div');
-  geomGroup.className = 'field-group';
-  const geomTitle = document.createElement('h2');
-  geomTitle.textContent = 'Hook geometry';
-  geomGroup.appendChild(geomTitle);
-  panelEl.appendChild(geomGroup);
+  const resetRow = document.createElement('div');
+  resetRow.className = 'reset-row';
+  const resetBtn = document.createElement('button');
+  resetBtn.textContent = 'Reset to defaults';
+  resetRow.appendChild(resetBtn);
+  panelEl.appendChild(resetRow);
 
-  const sliderKeys: (keyof typeof PARAM_LIMITS)[] = [
-    'hookHeight',
-    'hookLipDepth',
-    'hookCurlHeight',
-    'clampBandHeight',
-    'clampOffset',
-    'engagementDepth',
-    'screwEngagementDepth',
-    'partWidth',
-    'wallThickness',
+  // Grouped in the order a user actually thinks through customizing this: how big
+  // overall, then the hanging hook itself, then the clamp/screw that mounts it.
+  const groups: { title: string; keys: (keyof typeof PARAM_LIMITS)[] }[] = [
+    { title: 'Overall & print', keys: ['partWidth', 'wallThickness'] },
+    { title: 'Hook (the part you hang things on)', keys: ['hookHeight', 'hookLipDepth', 'hookCurlHeight'] },
+    {
+      title: 'Clamp & screw (mounts to the shelf lip)',
+      keys: ['clampBandHeight', 'clampOffset', 'engagementDepth', 'screwEngagementDepth'],
+    },
   ];
 
   const inputs: Partial<Record<keyof HookParams, HTMLInputElement>> = {};
+  let screwEngagementNote: HTMLDivElement | null = null;
 
-  for (const key of sliderKeys) {
-    const limit = PARAM_LIMITS[key];
-    const field = document.createElement('div');
-    field.className = 'field';
+  for (const group of groups) {
+    const groupEl = document.createElement('div');
+    groupEl.className = 'field-group';
+    const titleEl = document.createElement('h2');
+    titleEl.textContent = group.title;
+    groupEl.appendChild(titleEl);
 
-    const label = document.createElement('label');
-    const nameSpan = document.createElement('span');
-    nameSpan.textContent = limit.label;
-    const valSpan = document.createElement('span');
-    valSpan.className = 'val';
-    label.appendChild(nameSpan);
-    label.appendChild(valSpan);
+    for (const key of group.keys) {
+      const limit = PARAM_LIMITS[key];
+      const field = document.createElement('div');
+      field.className = 'field';
 
-    const input = document.createElement('input');
-    input.type = 'range';
-    input.min = String(limit.min);
-    input.max = String(limit.max);
-    input.step = String(limit.step);
-    input.value = String(params[key]);
+      const label = document.createElement('label');
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = limit.label;
+      const valSpan = document.createElement('span');
+      valSpan.className = 'val';
+      label.appendChild(nameSpan);
+      label.appendChild(valSpan);
 
-    const setVal = () => {
-      valSpan.textContent = `${Number(input.value).toFixed(limit.step < 1 ? 1 : 0)} ${limit.unit}`;
-    };
-    setVal();
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = String(limit.min);
+      input.max = String(limit.max);
+      input.step = String(limit.step);
+      input.value = String(params[key]);
 
-    input.addEventListener('input', () => {
-      (params as any)[key] = Number(input.value);
+      const setVal = () => {
+        valSpan.textContent = `${Number(input.value).toFixed(limit.step < 1 ? 1 : 0)} ${limit.unit}`;
+      };
       setVal();
-      cb.onChange({ ...params });
-    });
 
-    field.appendChild(label);
-    field.appendChild(input);
-    geomGroup.appendChild(field);
-    inputs[key] = input;
+      input.addEventListener('input', () => {
+        (params as any)[key] = Number(input.value);
+        setVal();
+        cb.onChange({ ...params });
+      });
+
+      field.appendChild(label);
+      field.appendChild(input);
+
+      if (key === 'screwEngagementDepth') {
+        screwEngagementNote = document.createElement('div');
+        screwEngagementNote.className = 'field-note';
+        field.appendChild(screwEngagementNote);
+      }
+
+      groupEl.appendChild(field);
+      inputs[key] = input;
+    }
+
+    panelEl.appendChild(groupEl);
   }
+
+  resetBtn.addEventListener('click', () => {
+    Object.assign(params, DEFAULT_PARAMS);
+    for (const key of Object.keys(inputs) as (keyof HookParams)[]) {
+      const input = inputs[key];
+      if (!input) continue;
+      input.value = String(params[key]);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    matSelect.value = params.material;
+    cb.onChange({ ...params });
+  });
 
   const printGroup = document.createElement('div');
   printGroup.className = 'field-group';
@@ -85,12 +114,12 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
   const matField = document.createElement('div');
   matField.className = 'field';
   const matLabel = document.createElement('label');
-  matLabel.innerHTML = '<span>Plastic (sets thread fit clearance)</span>';
+  matLabel.innerHTML = '<span>Plastic (sets thread fit)</span>';
   const matSelect = document.createElement('select');
   for (const key of Object.keys(MATERIALS) as Material[]) {
     const opt = document.createElement('option');
     opt.value = key;
-    opt.textContent = `${MATERIALS[key].label} (+${MATERIALS[key].threadClearance.toFixed(2)}mm clearance)`;
+    opt.textContent = `${MATERIALS[key].label} — ${MATERIALS[key].fitNote}`;
     matSelect.appendChild(opt);
   }
   matSelect.value = params.material;
@@ -147,14 +176,33 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
 
   panelEl.appendChild(exportGroup);
 
-  // viewport toolbar: layout toggle
+  // viewport toolbar: layout toggle, each with a one-line caption so the purpose of
+  // the two modes is clear without guessing, plus a color legend for the two parts.
   toolbarEl.innerHTML = '';
-  const btnPrint = document.createElement('button');
-  btnPrint.className = 'toolbar-btn active';
-  btnPrint.textContent = 'Print layout';
-  const btnAssembled = document.createElement('button');
-  btnAssembled.className = 'toolbar-btn';
-  btnAssembled.textContent = 'Assembled preview';
+
+  const makeToolbarButton = (text: string, caption: string) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'toolbar-group';
+    const btn = document.createElement('button');
+    btn.className = 'toolbar-btn';
+    btn.textContent = text;
+    const cap = document.createElement('div');
+    cap.className = 'toolbar-caption';
+    cap.textContent = caption;
+    wrap.appendChild(btn);
+    wrap.appendChild(cap);
+    return { wrap, btn };
+  };
+
+  const { wrap: printWrap, btn: btnPrint } = makeToolbarButton(
+    'Print layout',
+    'How the parts sit on your print bed',
+  );
+  const { wrap: assembledWrap, btn: btnAssembled } = makeToolbarButton(
+    'Assembled preview',
+    'How it looks installed',
+  );
+  btnPrint.classList.add('active');
 
   btnPrint.addEventListener('click', () => {
     btnPrint.classList.add('active');
@@ -166,15 +214,23 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
     btnPrint.classList.remove('active');
     cb.onLayoutChange('assembled');
   });
-  toolbarEl.appendChild(btnPrint);
-  toolbarEl.appendChild(btnAssembled);
+  toolbarEl.appendChild(printWrap);
+  toolbarEl.appendChild(assembledWrap);
+
+  const legend = document.createElement('div');
+  legend.className = 'toolbar-legend';
+  legend.innerHTML = `
+    <span><i class="swatch swatch-hook"></i>Hook</span>
+    <span><i class="swatch swatch-screw"></i>Screw</span>
+  `;
+  toolbarEl.appendChild(legend);
 
   return {
     updateSpec(screw: ScrewSpec) {
-      const engagementNote =
-        screw.backWallThickness <= screw.backWallThicknessMin + 0.01
-          ? ` <span title="Raised to the minimum needed so the threads don't strip">(raised to safe minimum)</span>`
-          : '';
+      const raised = screw.backWallThickness <= screw.backWallThicknessMin + 0.01;
+      const engagementNote = raised
+        ? ` <span title="Raised to the minimum needed so the threads don't strip">(raised to safe minimum)</span>`
+        : '';
       specBox.innerHTML = `
         <div>Nominal diameter: <strong>${screw.nominalDiameter.toFixed(1)} mm</strong></div>
         <div>Thread pitch: <strong>${screw.pitch.toFixed(2)} mm</strong></div>
@@ -182,6 +238,11 @@ export function mountPanel(panelEl: HTMLElement, toolbarEl: HTMLElement, cb: Pan
         <div>Screw length: <strong>${screw.length.toFixed(1)} mm</strong></div>
         <div>Head diameter: <strong>${screw.headDiameter.toFixed(1)} mm</strong></div>
       `;
+      if (screwEngagementNote) {
+        screwEngagementNote.textContent = raised
+          ? `Raised to ${screw.backWallThicknessMin.toFixed(1)} mm — the minimum for this screw size so the threads don't strip`
+          : '';
+      }
     },
   };
 }

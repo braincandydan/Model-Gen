@@ -20,13 +20,14 @@ export interface MaterialProfile {
   label: string;
   threadClearance: number; // radial clearance added to the hole per side (mm)
   minWall: number; // recommended minimum wall thickness (mm), used for clamping UI
+  fitNote: string; // plain-language description of the resulting thread fit
 }
 
 export const MATERIALS: Record<Material, MaterialProfile> = {
-  PLA: { label: 'PLA', threadClearance: 0.18, minWall: 1.6 },
-  PETG: { label: 'PETG', threadClearance: 0.22, minWall: 1.8 },
-  ABS: { label: 'ABS', threadClearance: 0.25, minWall: 2.0 },
-  TPU: { label: 'TPU', threadClearance: 0.3, minWall: 2.4 },
+  PLA: { label: 'PLA', threadClearance: 0.18, minWall: 1.6, fitNote: 'snug fit' },
+  PETG: { label: 'PETG', threadClearance: 0.22, minWall: 1.8, fitNote: 'standard fit' },
+  ABS: { label: 'ABS', threadClearance: 0.25, minWall: 2.0, fitNote: 'looser, easier to hand-thread' },
+  TPU: { label: 'TPU', threadClearance: 0.3, minWall: 2.4, fitNote: 'loosest — flexible material' },
 };
 
 export const DEFAULT_PARAMS: HookParams = {
@@ -54,12 +55,12 @@ export const PARAM_LIMITS: Record<keyof Omit<HookParams, 'material'>, { min: num
     label: 'Clamp height above arm (0 = strongest)',
     unit: 'mm',
   },
-  engagementDepth: { min: 4, max: 60, step: 0.5, label: 'Wall-piece thickness (gap)', unit: 'mm' },
+  engagementDepth: { min: 4, max: 60, step: 0.5, label: 'Shelf-lip gap width', unit: 'mm' },
   screwEngagementDepth: {
     min: 8,
     max: 50,
     step: 0.5,
-    label: 'Screw engagement depth',
+    label: 'Screw grip depth',
     unit: 'mm',
   },
   partWidth: { min: 12, max: 100, step: 1, label: 'Overall width', unit: 'mm' },

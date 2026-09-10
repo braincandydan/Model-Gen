@@ -12,6 +12,7 @@ export class Viewport {
 
   private hookMesh: THREE.Mesh;
   private screwMesh: THREE.Mesh;
+  private placeholderMesh: THREE.Mesh;
   private grid: THREE.GridHelper;
   private layout: LayoutMode = 'print';
   private current: BuiltModel | null = null;
@@ -49,7 +50,22 @@ export class Viewport {
     this.hookMesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
     this.hookMesh.castShadow = false;
     this.screwMesh = new THREE.Mesh(new THREE.BufferGeometry(), screwMaterial);
-    this.scene.add(this.hookMesh, this.screwMesh);
+
+    // A stand-in for the shelf lip / wall piece the clamp grips — that object is the
+    // user's own, not something this generator prints, but without something visible
+    // sitting in the gap, the "Shelf-lip gap width" slider has nothing to visibly size
+    // against. Only shown in the assembled preview, not the print layout.
+    const placeholderMaterial = new THREE.MeshStandardMaterial({
+      color: 0x8a8f99,
+      transparent: true,
+      opacity: 0.35,
+      roughness: 0.9,
+      depthWrite: false,
+    });
+    this.placeholderMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), placeholderMaterial);
+    this.placeholderMesh.visible = false;
+
+    this.scene.add(this.hookMesh, this.screwMesh, this.placeholderMesh);
 
     const resize = () => {
       const w = host.clientWidth;
@@ -91,6 +107,7 @@ export class Viewport {
     const box = new THREE.Box3();
     box.expandByObject(this.hookMesh);
     box.expandByObject(this.screwMesh);
+    if (this.placeholderMesh.visible) box.expandByObject(this.placeholderMesh);
     if (box.isEmpty()) return;
 
     const center = box.getCenter(new THREE.Vector3());
@@ -123,6 +140,7 @@ export class Viewport {
       const screwSpan = screw.length + screw.headHeight;
       this.screwMesh.position.set(params.partWidth / 2 + gap + screw.headDiameter / 2, screwSpan, 0);
       this.screwMesh.rotation.set(Math.PI / 2, 0, 0);
+      this.placeholderMesh.visible = false;
     } else {
       // Thread the screw into the boss from the back, roughly to the tightened position.
       this.hookMesh.position.set(0, 0, 0);
@@ -133,6 +151,16 @@ export class Viewport {
       const insertedZ = -(t + D) - screw.length * 0.15;
       this.screwMesh.position.set(0, boss.centerY, insertedZ);
       this.screwMesh.rotation.set(0, Math.PI, 0);
+
+      const widthPad = 16; // sticks out past the hook on each side, reads as its own object
+      this.placeholderMesh.geometry.dispose();
+      this.placeholderMesh.geometry = new THREE.BoxGeometry(
+        params.partWidth + widthPad * 2,
+        params.clampBandHeight,
+        D,
+      );
+      this.placeholderMesh.position.set(0, boss.centerY, -(t + D / 2));
+      this.placeholderMesh.visible = true;
     }
   }
 
