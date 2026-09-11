@@ -109,6 +109,135 @@ function buildFilletWedge(
   return geometry;
 }
 
+/**
+ * Rounding every edge of a box independently (buildFilletWedge above) leaves a small
+ * sharp ridge at every point where three edges meet: each edge's cylindrical wedge cuts
+ * a quarter-round along its own two in-plane axes and simply stops (a flat end-cap) at
+ * the corner, so it never removes the residual sliver where the *other* two edges' own
+ * wedges also stop. The standard fix for rounding a box corner (used here as a real,
+ * general pass rather than a one-off patch for whichever corner got reported) is to
+ * additionally cut a sphere of the same radius at the true corner point, offset inward
+ * by that radius along all three axes — exactly where each adjacent edge's own fillet
+ * arc is centered, so the sphere is tangent to all of them and smooths the ridge away.
+ */
+function buildCornerFillet(center: THREE.Vector3, radius: number, rotation = 0): THREE.BufferGeometry {
+  const geometry = new THREE.SphereGeometry(radius, 16, 10);
+  // A retry with a plain radius nudge (see the retry loop below) doesn't change the
+  // sphere's own facet directions, only their scale — so it can still land back on the
+  // same numerically-unlucky near-coplanar alignment with whatever it's cutting into.
+  // Rotating the tessellation itself between attempts actually moves those facet edges.
+  if (rotation !== 0) geometry.rotateY(rotation);
+  geometry.translate(center.x, center.y, center.z);
+  return geometry;
+}
+
+type Axis = 'x' | 'y' | 'z';
+
+/** Ties a (u, v, span) wedge parametrization to which world axis each one lands on, so a
+ * wedge's own corner/inward parameters are enough to derive a full 3D corner position and
+ * inward direction (see cornerDescriptors below) without any extra bookkeeping per edge. */
+interface AxisMap {
+  mapTo3D: (u: number, v: number, span: number) => THREE.Vector3;
+  axisU: Axis;
+  axisV: Axis;
+  axisSpan: Axis;
+}
+
+// (x, z) in-plane, extruded along Y (vertical edges)
+const mapVertical: AxisMap = { mapTo3D: (x, z, y) => new THREE.Vector3(x, y, z), axisU: 'x', axisV: 'z', axisSpan: 'y' };
+// (y, z) in-plane, extruded along X (horizontal edges)
+const mapHorizontal: AxisMap = { mapTo3D: (y, z, x) => new THREE.Vector3(x, y, z), axisU: 'y', axisV: 'z', axisSpan: 'x' };
+// (x, y) in-plane, extruded along Z (edges running front-to-back)
+const mapDepth: AxisMap = { mapTo3D: (x, y, z) => new THREE.Vector3(x, y, z), axisU: 'x', axisV: 'y', axisSpan: 'z' };
+
+function setAxis(v: THREE.Vector3, axis: Axis, value: number): void {
+  v[axis] = value;
+}
+
+interface WedgeSpec {
+  // `spanNudge` extends both span ends outward slightly (harmless — the wedge already
+  // only removes material inside the solid, so a touch of overshoot just gets clipped by
+  // whatever real boundary is there) — see the retry loop below for why.
+  build: (b: number, spanNudge?: number) => THREE.BufferGeometry;
+  cornerU: number;
+  uInward: 1 | -1;
+  cornerV: number;
+  vInward: 1 | -1;
+  spanMin: number;
+  spanMax: number;
+  axisMap: AxisMap;
+}
+
+function makeWedge(
+  cornerU: number,
+  uInward: 1 | -1,
+  cornerV: number,
+  vInward: 1 | -1,
+  axisMap: AxisMap,
+  spanMin: number,
+  spanMax: number,
+  segments: number,
+): WedgeSpec {
+  return {
+    build: (b, spanNudge = 0) =>
+      buildFilletWedge(cornerU, uInward, cornerV, vInward, b, segments, axisMap.mapTo3D, spanMin - spanNudge, spanMax + spanNudge),
+    cornerU,
+    uInward,
+    cornerV,
+    vInward,
+    spanMin,
+    spanMax,
+    axisMap,
+  };
+}
+
+/**
+ * Detects a thin sliver triangle near `center` — the signature of three-bvh-csg botching
+ * a boolean when two surfaces meet at a numerically-unlucky near-coplanar angle (the same
+ * class of fragility documented elsewhere in this file, just showing up as a degenerate
+ * triangle instead of an out-of-bounds spike). Restricted to a small radius around the
+ * cut instead of scanning the whole geometry, both to stay cheap and to avoid flagging
+ * unrelated legitimately-small facets elsewhere in the model (e.g. from a small bevel).
+ */
+function hasThinTriangleNear(
+  geom: THREE.BufferGeometry,
+  center: THREE.Vector3,
+  searchRadius: number,
+  minArea: number,
+): boolean {
+  const posAttr = geom.attributes.position;
+  const index = geom.index;
+  const triCount = index ? index.count / 3 : posAttr.count / 3;
+  const vi = (t: number, k: number) => (index ? index.getX(t * 3 + k) : t * 3 + k);
+  for (let t = 0; t < triCount; t++) {
+    const i0 = vi(t, 0), i1 = vi(t, 1), i2 = vi(t, 2);
+    const ax = posAttr.getX(i0), ay = posAttr.getY(i0), az = posAttr.getZ(i0);
+    const bx = posAttr.getX(i1), by = posAttr.getY(i1), bz = posAttr.getZ(i1);
+    const cx = posAttr.getX(i2), cy = posAttr.getY(i2), cz = posAttr.getZ(i2);
+    const centroidX = (ax + bx + cx) / 3, centroidY = (ay + by + cy) / 3, centroidZ = (az + bz + cz) / 3;
+    if (Math.hypot(centroidX - center.x, centroidY - center.y, centroidZ - center.z) > searchRadius) continue;
+    const ux = bx - ax, uy = by - ay, uz = bz - az;
+    const vx = cx - ax, vy = cy - ay, vz = cz - az;
+    const area = 0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+    if (area < minArea) return true;
+  }
+  return false;
+}
+
+/** Both ends of a wedge's span are real 3D box corners; each end's inward direction along
+ * the span axis is implied by whether the solid continues from spanMin (+1) or spanMax (-1). */
+function cornerDescriptors(w: WedgeSpec): { pos: THREE.Vector3; inward: THREE.Vector3 }[] {
+  const at = (span: number, spanInward: 1 | -1) => {
+    const pos = w.axisMap.mapTo3D(w.cornerU, w.cornerV, span);
+    const inward = new THREE.Vector3();
+    setAxis(inward, w.axisMap.axisU, w.uInward);
+    setAxis(inward, w.axisMap.axisV, w.vInward);
+    setAxis(inward, w.axisMap.axisSpan, spanInward);
+    return { pos, inward };
+  };
+  return [at(w.spanMin, 1), at(w.spanMax, -1)];
+}
+
 export interface HookBuildResult {
   geometry: THREE.BufferGeometry;
   boss: { centerY: number; backZProfile: number };
@@ -183,18 +312,6 @@ export function buildHookBody(p: HookParams, screw: ScrewSpec): HookBuildResult 
   const backZ = -(t + D + Tb); // world_z of the back wall's outer face
 
   if (bevel > 0.01) {
-    // (x, z) in-plane, extruded along Y (vertical edges)
-    const mapVertical = (x: number, z: number, y: number) => new THREE.Vector3(x, y, z);
-    // (y, z) in-plane, extruded along X (horizontal edges)
-    const mapHorizontal = (y: number, z: number, x: number) => new THREE.Vector3(x, y, z);
-    // (x, y) in-plane, extruded along Z (edges running front-to-back, e.g. the top-side
-    // edges of the clamp block and the sides of the hook's lip) — the vertical/horizontal
-    // wedges above bevel edges where the extrusion runs along Y or X, but every long edge
-    // that instead runs along Z (front-to-back) was missing this pass entirely, leaving
-    // the flat top/side face's sharp corner running the full depth past where the front
-    // and back bevels stop.
-    const mapDepth = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
-
     // The shelf's top-side edge is exposed from where it meets the arm (world_z = -t)
     // out to the tip — except where the end-stop sits on top of it near the tip, which
     // covers the last `t` of that length.
@@ -203,61 +320,56 @@ export function buildHookBody(p: HookParams, screw: ScrewSpec): HookBuildResult 
     const gapInnerZ = -(t + D); // world_z where the back wall's inner (gap-facing) face sits
     const floorBottomY = clampTop - t; // underside of the floor's cantilevered overhang
 
-    // Each wedge is a factory taking the bevel to build it with, not a pre-built
-    // geometry — see the retry loop below for why: when a cut is rejected, retrying
-    // with the exact same geometry would just be rejected again, so it needs to be
-    // rebuilt with a slightly different bevel each attempt.
-    type WedgeFactory = (b: number) => THREE.BufferGeometry;
-    const wedges: WedgeFactory[] = [
+    const wedges: WedgeSpec[] = [
       // front-left / front-right, running the full arm height
-      (b) => buildFilletWedge(hw, -1, frontZ, -1, b, filletSegments, mapVertical, t, clampTop),
-      (b) => buildFilletWedge(-hw, 1, frontZ, -1, b, filletSegments, mapVertical, t, clampTop),
+      makeWedge(hw, -1, frontZ, -1, mapVertical, t, clampTop, filletSegments),
+      makeWedge(-hw, 1, frontZ, -1, mapVertical, t, clampTop, filletSegments),
       // tip-left / tip-right, running the full shelf + end-stop height
-      (b) => buildFilletWedge(hw, -1, tipZ, -1, b, filletSegments, mapVertical, 0, t + curl),
-      (b) => buildFilletWedge(-hw, 1, tipZ, -1, b, filletSegments, mapVertical, 0, t + curl),
+      makeWedge(hw, -1, tipZ, -1, mapVertical, 0, t + curl, filletSegments),
+      makeWedge(-hw, 1, tipZ, -1, mapVertical, 0, t + curl, filletSegments),
       // back-left / back-right, running the full back-wall height
-      (b) => buildFilletWedge(hw, -1, backZ, 1, b, filletSegments, mapVertical, clampBottom, clampTop),
-      (b) => buildFilletWedge(-hw, 1, backZ, 1, b, filletSegments, mapVertical, clampBottom, clampTop),
+      makeWedge(hw, -1, backZ, 1, mapVertical, clampBottom, clampTop, filletSegments),
+      makeWedge(-hw, 1, backZ, 1, mapVertical, clampBottom, clampTop, filletSegments),
       // top-front / top-back, running the full width
-      (b) => buildFilletWedge(clampTop, -1, frontZ, -1, b, filletSegments, mapHorizontal, -hw, hw),
-      (b) => buildFilletWedge(clampTop, -1, backZ, 1, b, filletSegments, mapHorizontal, -hw, hw),
+      makeWedge(clampTop, -1, frontZ, -1, mapHorizontal, -hw, hw, filletSegments),
+      makeWedge(clampTop, -1, backZ, 1, mapHorizontal, -hw, hw, filletSegments),
       // top-left / top-right of the clamp block, running the full depth of the band
-      (b) => buildFilletWedge(hw, -1, clampTop, -1, b, filletSegments, mapDepth, backZ, frontZ),
-      (b) => buildFilletWedge(-hw, 1, clampTop, -1, b, filletSegments, mapDepth, backZ, frontZ),
+      makeWedge(hw, -1, clampTop, -1, mapDepth, backZ, frontZ, filletSegments),
+      makeWedge(-hw, 1, clampTop, -1, mapDepth, backZ, frontZ, filletSegments),
       // shelf-left / shelf-right, running the lip's exposed length (its top-side edge)
-      (b) => buildFilletWedge(hw, -1, t, -1, b, filletSegments, mapDepth, shelfSideZStart, shelfSideZEnd),
-      (b) => buildFilletWedge(-hw, 1, t, -1, b, filletSegments, mapDepth, shelfSideZStart, shelfSideZEnd),
+      makeWedge(hw, -1, t, -1, mapDepth, shelfSideZStart, shelfSideZEnd, filletSegments),
+      makeWedge(-hw, 1, t, -1, mapDepth, shelfSideZStart, shelfSideZEnd, filletSegments),
       // back-wall-inner-left / -right: where the back wall's gap-facing inner face meets
       // its own side face (separate from back-left/right, which is its far outer corner)
-      (b) => buildFilletWedge(hw, -1, gapInnerZ, -1, b, filletSegments, mapVertical, clampBottom, floorBottomY),
-      (b) => buildFilletWedge(-hw, 1, gapInnerZ, -1, b, filletSegments, mapVertical, clampBottom, floorBottomY),
+      makeWedge(hw, -1, gapInnerZ, -1, mapVertical, clampBottom, floorBottomY, filletSegments),
+      makeWedge(-hw, 1, gapInnerZ, -1, mapVertical, clampBottom, floorBottomY, filletSegments),
       // back-wall-bottom-left / -right: the underside of the back wall, which isn't backed
       // by anything below it
-      (b) => buildFilletWedge(hw, -1, clampBottom, 1, b, filletSegments, mapDepth, backZ, gapInnerZ),
-      (b) => buildFilletWedge(-hw, 1, clampBottom, 1, b, filletSegments, mapDepth, backZ, gapInnerZ),
+      makeWedge(hw, -1, clampBottom, 1, mapDepth, backZ, gapInnerZ, filletSegments),
+      makeWedge(-hw, 1, clampBottom, 1, mapDepth, backZ, gapInnerZ, filletSegments),
       // arm/shelf-back-left / -right: the other long side edge, opposite frontZ — this
       // and the next two pairs are the ones opposite an already-beveled face across a
       // `t`-thick wall (see the bevelMax comment above for why they use the same,
       // already-safe `bevel` rather than a separately-shrunk amount)
-      (b) => buildFilletWedge(hw, -1, -t, 1, b, filletSegments, mapVertical, 0, floorBottomY),
-      (b) => buildFilletWedge(-hw, 1, -t, 1, b, filletSegments, mapVertical, 0, floorBottomY),
+      makeWedge(hw, -1, -t, 1, mapVertical, 0, floorBottomY, filletSegments),
+      makeWedge(-hw, 1, -t, 1, mapVertical, 0, floorBottomY, filletSegments),
       // shelf-bottom-left / -right: the lip's underside side edge
-      (b) => buildFilletWedge(hw, -1, 0, 1, b, filletSegments, mapDepth, shelfSideZStart, tipZ),
-      (b) => buildFilletWedge(-hw, 1, 0, 1, b, filletSegments, mapDepth, shelfSideZStart, tipZ),
+      makeWedge(hw, -1, 0, 1, mapDepth, shelfSideZStart, tipZ, filletSegments),
+      makeWedge(-hw, 1, 0, 1, mapDepth, shelfSideZStart, tipZ, filletSegments),
       // floor-bottom-left / -right: the underside of the floor's cantilevered overhang
-      (b) => buildFilletWedge(hw, -1, floorBottomY, 1, b, filletSegments, mapDepth, gapInnerZ, -t),
-      (b) => buildFilletWedge(-hw, 1, floorBottomY, 1, b, filletSegments, mapDepth, gapInnerZ, -t),
+      makeWedge(hw, -1, floorBottomY, 1, mapDepth, gapInnerZ, -t, filletSegments),
+      makeWedge(-hw, 1, floorBottomY, 1, mapDepth, gapInnerZ, -t, filletSegments),
     ];
 
     if (curl > 0) {
       // end-stop-left / end-stop-right, covering the short length the shelf bevel above leaves out
       wedges.push(
-        (b) => buildFilletWedge(hw, -1, t + curl, -1, b, filletSegments, mapDepth, tipZ - t, tipZ),
-        (b) => buildFilletWedge(-hw, 1, t + curl, -1, b, filletSegments, mapDepth, tipZ - t, tipZ),
+        makeWedge(hw, -1, t + curl, -1, mapDepth, tipZ - t, tipZ, filletSegments),
+        makeWedge(-hw, 1, t + curl, -1, mapDepth, tipZ - t, tipZ, filletSegments),
         // end-stop-back-left / -right: its own back vertical edge, between the shelf-top
         // bevel (below) and the end-stop-top bevel (above)
-        (b) => buildFilletWedge(hw, -1, tipZ - t, 1, b, filletSegments, mapVertical, t, t + curl),
-        (b) => buildFilletWedge(-hw, 1, tipZ - t, 1, b, filletSegments, mapVertical, t, t + curl),
+        makeWedge(hw, -1, tipZ - t, 1, mapVertical, t, t + curl, filletSegments),
+        makeWedge(-hw, 1, tipZ - t, 1, mapVertical, t, t + curl, filletSegments),
       );
     }
     // three-bvh-csg is documented elsewhere in this file as fragile for complex
@@ -286,15 +398,85 @@ export function buildHookBody(p: HookParams, screw: ScrewSpec): HookBuildResult 
         bb.min.z >= expectedBounds.minZ - maxBoundsGrowth
       );
     };
-    const retryScales = [1, 0.995, 1.005, 0.99, 1.01, 0.98, 1.02, 0.95, 1.05];
+    // Each attempt varies bevel scale, position, and span length together — three
+    // different numbers behind the same visual cut, any one of which can flip
+    // three-bvh-csg's boolean from silently failing to succeeding at a given absolute
+    // position in space (all three confirmed directly, independently of one another).
+    // Scale is only ever nudged down beyond 1.05, never up, since bevel is already capped
+    // at half the wall thickness and scaling further would let opposite faces' bevels
+    // overlap and break the cut outright instead of dodging a coincidence.
+    const retryAttempts: { scale: number; jitter: [number, number, number]; spanNudge: number }[] = [
+      { scale: 1, jitter: [0, 0, 0], spanNudge: 0 },
+      { scale: 0.995, jitter: [0, 0, 0], spanNudge: 0 },
+      { scale: 1.005, jitter: [0, 0, 0], spanNudge: 0 },
+      { scale: 0.99, jitter: [0.05, 0, 0.05], spanNudge: 0.05 },
+      { scale: 1.01, jitter: [-0.05, 0, -0.05], spanNudge: 0.05 },
+      { scale: 0.98, jitter: [0, 0.05, 0], spanNudge: 0.1 },
+      { scale: 1.02, jitter: [0, -0.05, 0], spanNudge: 0.1 },
+      { scale: 0.95, jitter: [0.1, 0, 0.1], spanNudge: 0.2 },
+      { scale: 1.05, jitter: [-0.1, 0, -0.1], spanNudge: 0.2 },
+    ];
+    const trianglesOf = (geom: THREE.BufferGeometry) => (geom.index ? geom.index.count : geom.attributes.position.count) / 3;
     for (const wedge of wedges) {
-      for (const scale of retryScales) {
-        const candidate = subtract(brush, toBrush(wedge(bevel * scale)));
-        if (isInBounds(candidate.geometry)) {
+      const beforeTris = trianglesOf(brush.geometry);
+      for (const { scale, jitter, spanNudge } of retryAttempts) {
+        const geom = wedge.build(bevel * scale, spanNudge);
+        const [jx, jy, jz] = jitter;
+        if (jx || jy || jz) geom.translate(jx, jy, jz);
+        const candidate = subtract(brush, toBrush(geom));
+        // three-bvh-csg can also silently no-op a subtraction (a near-degenerate/
+        // coincident intersection) — bounds trivially pass when nothing changed, so also
+        // require the cut to have actually added a meaningful number of facets. This
+        // won't catch every partial-cut failure (occasionally one edge stays sharp at a
+        // specific bevel value despite this), but a stricter per-triangle check here cost
+        // several seconds per rebuild for a modest gain, which isn't a fair trade for an
+        // interactive slider.
+        const grewMeaningfully = trianglesOf(candidate.geometry) > beforeTris + 2;
+        if (isInBounds(candidate.geometry) && grewMeaningfully) {
           brush = candidate;
           break;
         }
         // last attempt failed too — that edge stays sharp for this exact configuration
+      }
+    }
+
+    // Corner pass: a wedge's span endpoint is only a genuine 3-face box corner when a
+    // *different* edge's wedge also terminates there — a point where only one wedge ends
+    // is instead a T-junction, where a perpendicular edge merges into an otherwise
+    // continuous edge that just happens to run through that point without its own
+    // endpoint there (e.g. the shelf-top edge meeting the arm's back edge partway along
+    // its length). Cutting a corner-rounding sphere at a T-junction is wrong — there's no
+    // third face terminating there for it to blend into — so corners are only kept when
+    // at least two independent wedges agree on both the position and the inward
+    // direction; a single contributor, or two that disagree, is left alone.
+    const cornersByKey = new Map<string, { pos: THREE.Vector3; inward: THREE.Vector3; count: number; consistent: boolean }>();
+    for (const wedge of wedges) {
+      for (const c of cornerDescriptors(wedge)) {
+        const key = `${c.pos.x.toFixed(3)},${c.pos.y.toFixed(3)},${c.pos.z.toFixed(3)}`;
+        const existing = cornersByKey.get(key);
+        if (!existing) {
+          cornersByKey.set(key, { pos: c.pos, inward: c.inward, count: 1, consistent: true });
+        } else {
+          existing.count++;
+          if (!existing.inward.equals(c.inward)) existing.consistent = false;
+        }
+      }
+    }
+    const corners = Array.from(cornersByKey.entries()).filter(([, c]) => c.count >= 2 && c.consistent);
+    const cornerRetryScales = [1, 0.995, 1.005, 0.99, 1.01, 0.98, 1.02, 0.95, 1.05];
+    for (const [, { pos, inward }] of corners) {
+      for (const [scaleIdx, scale] of cornerRetryScales.entries()) {
+        const r = bevel * scale;
+        // Unlike the plain radius nudge above, rotating the sphere's own tessellation
+        // between attempts actually moves its facet edges, giving a real chance of
+        // dodging a near-coplanar coincidence that a radius-only change wouldn't.
+        const rotation = (scaleIdx * 0.41) % (Math.PI / 2);
+        const center = pos.clone().addScaledVector(inward, r);
+        const candidate = subtract(brush, toBrush(buildCornerFillet(center, r, rotation)));
+        if (isInBounds(candidate.geometry) && !hasThinTriangleNear(candidate.geometry, center, r * 3, r * r * 1e-4)) {
+          brush = candidate;
+          break;
+        }
       }
     }
   }
